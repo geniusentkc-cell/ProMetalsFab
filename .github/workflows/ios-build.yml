@@ -30,3 +30,43 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+      - name: Build unsigned iPhone application
+        run: |
+          xcodebuild \
+            -project FieldFab.xcodeproj \
+            -scheme FieldFab \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath device-build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p ipa/Payload
+          find device-build/Build/Products/Release-iphoneos \
+            -maxdepth 1 -name '*.app' -type d \
+            -exec cp -R {} ipa/Payload/ \;
+          test -n "$(find ipa/Payload -maxdepth 1 -name '*.app' -print -quit)"
+          cd ipa
+          zip -qry ProMetalsFab-unsigned.ipa Payload
+
+      - name: Upload iPhone IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProMetalsFab-iPhone-IPA
+          path: ipa/ProMetalsFab-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload iOS simulator app
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProMetalsFab-iOS-Simulator
+          path: build/Build/Products/Debug-iphonesimulator/*.app
+          if-no-files-found: error
+          retention-days: 7
