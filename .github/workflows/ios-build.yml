@@ -1,0 +1,32 @@
+
+name: ProMetalsFab iOS Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Download source code
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Find available Xcode schemes
+        run: |
+          xcodebuild -list -project FieldFab.xcodeproj
+
+      - name: Compile iOS simulator app
+        run: |
+          xcodebuild \
+            -project FieldFab.xcodeproj \
+            -scheme FieldFab \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
