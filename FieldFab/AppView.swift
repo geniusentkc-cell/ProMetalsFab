@@ -42,7 +42,7 @@ struct AppView: View {
     @EnvironmentObject var state: AppState
     @State var splitViewMode: NavigationSplitViewVisibility = .detailOnly
     @State var changeLogShown: Bool = false
-    var modules = AvailableModules.allCases
+    var modules: [AvailableModules] = [.ductTransition]
     
     @ViewBuilder
     func navList() -> some View {
