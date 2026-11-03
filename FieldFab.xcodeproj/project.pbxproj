@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A0B100000000000000000003 /* FabModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B100000000000000000000 /* FabModels.swift */; };
+		A0B100000000000000000004 /* FabViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B100000000000000000001 /* FabViews.swift */; };
+		A0B100000000000000000005 /* FabPDF.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B100000000000000000002 /* FabPDF.swift */; };
+
 		7E89E14873ACECE13D83E76A /* IntakeCalculatorModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E89EEFE162188B0CA0C7318 /* IntakeCalculatorModule.swift */; };
 		EE12F1822592F6F8007F5CE4 /* PopupView in Frameworks */ = {isa = PBXBuildFile; productRef = EE12F1812592F6F8007F5CE4 /* PopupView */; };
 		EE138A982D734C1E005CBC2F /* AirflowMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE138A972D734C1B005CBC2F /* AirflowMath.swift */; };
@@ -81,6 +85,10 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A0B100000000000000000000 /* FabModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FabModels.swift; sourceTree = "<group>"; };
+		A0B100000000000000000001 /* FabViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FabViews.swift; sourceTree = "<group>"; };
+		A0B100000000000000000002 /* FabPDF.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FabPDF.swift; sourceTree = "<group>"; };
+
 		7E89EEFE162188B0CA0C7318 /* IntakeCalculatorModule.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = IntakeCalculatorModule.swift; sourceTree = "<group>"; };
 		EE138A972D734C1B005CBC2F /* AirflowMath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AirflowMath.swift; sourceTree = "<group>"; };
 		EE1970462BBDA703002CB0D2 /* FittingIndexView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FittingIndexView.swift; sourceTree = "<group>"; };
@@ -169,6 +177,17 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		A0B100000000000000000006 /* ProMetalsFab */ = {
+			isa = PBXGroup;
+			children = (
+				A0B100000000000000000000 /* FabModels.swift */,
+				A0B100000000000000000001 /* FabViews.swift */,
+				A0B100000000000000000002 /* FabPDF.swift */,
+			);
+			path = ProMetalsFab;
+			sourceTree = "<group>";
+		};
+
 		7E89E6A19B764DB92757BFF2 /* IntakeCalculator */ = {
 			isa = PBXGroup;
 			children = (
@@ -307,6 +326,7 @@
 			children = (
 				EE97EC7A295E190A00A9FDBC /* ConceptTesting */,
 				EE8D395B25831C7600A1AC39 /* AppMain.swift */,
+				A0B100000000000000000006 /* ProMetalsFab */,
 				EE8D396425831DEE00A1AC39 /* AppState.swift */,
 				EE9022BC258EC87C00EE0C9A /* AppView.swift */,
 				EEC7CF3B25034397003389AB /* Assets.xcassets */,
@@ -536,6 +556,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				EE8D395C25831C7600A1AC39 /* AppMain.swift in Sources */,
+				A0B100000000000000000003 /* FabModels.swift in Sources */,
+				A0B100000000000000000004 /* FabViews.swift in Sources */,
+				A0B100000000000000000005 /* FabPDF.swift in Sources */,
+
 				EE6C3BB2259C3F3700AA70AE /* DuctTransitionCameraHelpView.swift in Sources */,
 				EE138A982D734C1E005CBC2F /* AirflowMath.swift in Sources */,
 				EE19704E2BBDB7A0002CB0D2 /* FittingType.swift in Sources */,
@@ -748,7 +772,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = FieldFab/FieldFab.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3.1.0;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = J737B85W5Z;
 				ENABLE_PREVIEWS = YES;
@@ -760,12 +784,12 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.1.0;
+				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
 					"-Xlinker",
 					"-interposable",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = Just1Guy.FieldFab;
+				PRODUCT_BUNDLE_IDENTIFIER = com.prometals.prometalsfab;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRIP_STYLE = all;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -785,7 +809,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = FieldFab/FieldFab.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3.1.0;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = J737B85W5Z;
 				ENABLE_PREVIEWS = YES;
@@ -797,9 +821,9 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.1.0;
+				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = Just1Guy.FieldFab;
+				PRODUCT_BUNDLE_IDENTIFIER = com.prometals.prometalsfab;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRIP_STYLE = all;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
