@@ -140,16 +140,16 @@ enum FabPDFExporter {
         } else if f.shape == .roundTee {
             drawTee(in: r, stroke: stroke)
         } else {
-            let leftSize = plan ? f.inletWidth : (f.isRound ? f.inletWidth : f.inletHeight)
-            let rightSize = f.shape.needsOutlet ? (plan ? f.outletWidth : (f.effectiveOutletHeight)) : leftSize
-            let shift = plan ? f.offsetX : f.offsetY
-            let maxSpan = max(leftSize, rightSize) + abs(shift) * 2
-            let scale = min(2.65, 56.0 / CGFloat(max(maxSpan, 1)))
+            let leftSize: Double = plan ? f.inletWidth : (f.isRound ? f.inletWidth : f.inletHeight)
+            let rightSize: Double = f.shape.needsOutlet ? (plan ? f.outletWidth : (f.effectiveOutletHeight)) : leftSize
+            let shift: Double = plan ? f.offsetX : f.offsetY
+            let maxSpan: Double = Swift.max(leftSize, rightSize) + Swift.abs(shift) * 2.0
+            let scale: CGFloat = Swift.min(CGFloat(2.65), CGFloat(56.0) / CGFloat(Swift.max(maxSpan, 1.0)))
             let cy = r.midY
-            let leftHalf = CGFloat(leftSize) * scale * 0.5
-            let rightHalf = CGFloat(rightSize) * scale * 0.5
+            let leftHalf: CGFloat = CGFloat(leftSize) * scale * 0.5
+            let rightHalf: CGFloat = CGFloat(rightSize) * scale * 0.5
             // UIKit Y points down, therefore positive Y offset moves the outlet upwards.
-            let rightCY = cy - CGFloat(shift) * scale
+            let rightCY: CGFloat = cy - CGFloat(shift) * scale
             let x1 = r.minX + 7, x2 = r.minX + 25, x3 = r.maxX - 25, x4 = r.maxX - 7
             let top = UIBezierPath()
             top.move(to: CGPoint(x: x1, y: cy - leftHalf))
