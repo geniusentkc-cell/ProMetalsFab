@@ -1,2 +1,7 @@
 DerivedData/
 .DS_Store
+
+build/
+device-build/
+ipa/
+*.xcuserstate
