@@ -14,10 +14,12 @@ struct FieldFabApp: App {
     static let loadMethod: ModuleLoadMethod = .development
     static let appState = AppState()
     static let ductTransitionModuleState = DuctTransition.ModuleState()
+    static let fabStore = FabStore()
 
     var body: some Scene {
         WindowGroup {
-            AppView()
+            FabHomeView()
+                .environmentObject(Self.fabStore)
                 .environmentObject(Self.appState)
                 .environmentObject(Self.ductTransitionModuleState)
                 .onOpenURL(perform: { url in
