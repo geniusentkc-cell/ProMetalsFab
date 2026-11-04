@@ -266,10 +266,12 @@ struct FabAreaFittingsView: View {
             }
         }
         .sheet(item: $editing) { fitting in
-            FabFittingEditor(fitting: fitting, area: area) { saved in
-                guard var changed = job, let index = changed.fittings.firstIndex(where: { $0.id == saved.id }) else { return }
-                changed.fittings[index] = saved
-                store.replace(changed)
+            NavigationStack {
+                FabFittingEditor(fitting: fitting, area: area) { saved in
+                    guard var changed = job, let index = changed.fittings.firstIndex(where: { $0.id == saved.id }) else { return }
+                    changed.fittings[index] = saved
+                    store.replace(changed)
+                }
             }
         }
         .sheet(item: $shareFile) { FabShareSheet(items: [$0.url]) }
@@ -293,23 +295,34 @@ struct FabNewFittingFlow: View {
             List {
                 Section("Rectangular") {
                     ForEach(FabShape.allCases.filter { !$0.isRound }) { shape in
-                        NavigationLink(value: shape) { Label(shape.rawValue, systemImage: "square") }
+                        NavigationLink {
+                            newFittingEditor(for: shape)
+                        } label: {
+                            Label(shape.rawValue, systemImage: "square")
+                        }
                     }
                 }
                 Section("Round") {
                     ForEach(FabShape.allCases.filter(\.isRound)) { shape in
-                        NavigationLink(value: shape) { Label(shape.rawValue, systemImage: "circle") }
+                        NavigationLink {
+                            newFittingEditor(for: shape)
+                        } label: {
+                            Label(shape.rawValue, systemImage: "circle")
+                        }
                     }
                 }
             }
             .navigationTitle("Select Fitting").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-            .navigationDestination(for: FabShape.self) { shape in
-                FabFittingEditor(fitting: .new(shape: shape, areaID: areaID), area: area) { new in
-                    onSave(new)
-                    dismiss()
-                }
-            }
+        }
+    }
+    // The editor is a destination in this NavigationStack, not another stack or sheet.
+    // Only the containing selection sheet is dismissed after a successful save.
+    private func newFittingEditor(for shape: FabShape) -> some View {
+        FabFittingEditor(fitting: .new(shape: shape, areaID: areaID), area: area,
+                         dismissAfterSave: false) { new in
+            onSave(new)
+            dismiss()
         }
     }
 }
@@ -319,9 +332,14 @@ struct FabFittingEditor: View {
     @State private var fitting: FabFitting
     let area: FabArea?
     let onSave: (FabFitting) -> Void
+    let dismissAfterSave: Bool
     @State private var showError = false
-    init(fitting: FabFitting, area: FabArea?, onSave: @escaping (FabFitting) -> Void) {
-        _fitting = State(initialValue: fitting); self.area = area; self.onSave = onSave
+    init(fitting: FabFitting, area: FabArea?, dismissAfterSave: Bool = true,
+         onSave: @escaping (FabFitting) -> Void) {
+        _fitting = State(initialValue: fitting)
+        self.area = area
+        self.dismissAfterSave = dismissAfterSave
+        self.onSave = onSave
     }
     private var isRound: Bool { fitting.isRound }
     private var connections: [FabConnection] { isRound ? FabConnection.round : FabConnection.rectangular }
@@ -337,8 +355,7 @@ struct FabFittingEditor: View {
         }
     }
     var body: some View {
-        NavigationStack {
-            Form {
+        Form {
                 Section("Fitting") {
                     Text(fitting.shape.rawValue).font(.headline)
                     TextField("Fitting label (optional)", text: $fitting.name)
@@ -454,14 +471,16 @@ struct FabFittingEditor: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         if fitting.validationMessage != nil { showError = true }
-                        else { onSave(fitting); dismiss() }
+                        else {
+                            onSave(fitting)
+                            if dismissAfterSave { dismiss() }
+                        }
                     }
                 }
             }
             .alert("Check Measurements", isPresented: $showError) {
                 Button("OK") {}
             } message: { Text(fitting.validationMessage ?? "Please check your fitting.") }
-        }
     }
 }
 
