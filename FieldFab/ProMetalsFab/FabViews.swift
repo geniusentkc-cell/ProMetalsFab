@@ -214,9 +214,9 @@ struct FabAreaFittingsView: View {
                             Image(systemName: fitting.isRound ? "circle.dotted.circle" : "square.on.square")
                                 .font(.title3).foregroundColor(.blue).frame(width: 28)
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(fitting.name.isEmpty ? fitting.shape.rawValue : fitting.name)
+                                Text(fitting.name.isEmpty ? fitting.shape.displayName : fitting.name)
                                     .font(.headline).foregroundColor(.primary)
-                                Text(fitting.shape.rawValue + " · Qty \(fitting.quantity)")
+                                Text(fitting.shape.displayName + " · Qty \(fitting.quantity)")
                                     .font(.caption).foregroundColor(.secondary)
                                 Text(fitting.isRound ? "Ø \(fabInches(fitting.inletWidth))" : "\(fabInches(fitting.inletWidth)) × \(fabInches(fitting.inletHeight))")
                                     .font(.caption).foregroundColor(.secondary)
@@ -290,39 +290,54 @@ struct FabNewFittingFlow: View {
     let areaID: UUID?
     let area: FabArea?
     let onSave: (FabFitting) -> Void
+
+    private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
     var body: some View {
         NavigationStack {
-            List {
-                Section("Rectangular") {
-                    ForEach(FabShape.allCases.filter { !$0.isRound }) { shape in
-                        NavigationLink {
-                            newFittingEditor(for: shape)
-                        } label: {
-                            Label(shape.rawValue, systemImage: "square")
-                        }
-                    }
-                }
-                Section("Round") {
-                    ForEach(FabShape.allCases.filter(\.isRound)) { shape in
-                        NavigationLink {
-                            newFittingEditor(for: shape)
-                        } label: {
-                            Label(shape.rawValue, systemImage: "circle")
-                        }
-                    }
-                }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("RECTANGULAR").font(.caption).fontWeight(.bold).foregroundColor(.secondary)
+                    grid(FabShape.libraryChoices.filter { !$0.isRound && !$0.isCustom })
+                    Text("ROUND").font(.caption).fontWeight(.bold).foregroundColor(.secondary)
+                    grid(FabShape.libraryChoices.filter(\.isRound))
+                    Text("SPECIAL REQUEST").font(.caption).fontWeight(.bold).foregroundColor(.secondary)
+                    grid([.custom])
+                    Text("Select a fitting to enter its dimensions. Letter keys are consistent across the fitting library.")
+                        .font(.footnote).foregroundColor(.secondary)
+                }.padding(16)
             }
-            .navigationTitle("Select Fitting").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .navigationTitle("Select Fitting")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+            }}
         }
     }
-    // The editor is a destination in this NavigationStack, not another stack or sheet.
-    // Only the containing selection sheet is dismissed after a successful save.
-    private func newFittingEditor(for shape: FabShape) -> some View {
-        FabFittingEditor(fitting: .new(shape: shape, areaID: areaID), area: area,
-                         dismissAfterSave: false) { new in
-            onSave(new)
-            dismiss()
+    private func grid(_ shapes: [FabShape]) -> some View {
+        LazyVGrid(columns: columns, spacing: 12) {
+            ForEach(shapes) { shape in
+                NavigationLink {
+                    FabFittingEditor(fitting: .new(shape: shape, areaID: areaID), area: area,
+                                     dismissAfterSave: false) { new in
+                        onSave(new)
+                        dismiss() // Dismiss the whole selection sheet, only once.
+                    }
+                } label: {
+                    VStack(spacing: 7) {
+                        FabFittingGlyph(shape: shape)
+                            .frame(height: 94)
+                            .padding(.horizontal, 8)
+                        Text(shape.displayName)
+                            .font(.subheadline).fontWeight(.medium)
+                            .multilineTextAlignment(.center)
+                            .frame(minHeight: 34)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(10)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 }
@@ -334,15 +349,68 @@ struct FabFittingEditor: View {
     let onSave: (FabFitting) -> Void
     let dismissAfterSave: Bool
     @State private var showError = false
+
     init(fitting: FabFitting, area: FabArea?, dismissAfterSave: Bool = true,
          onSave: @escaping (FabFitting) -> Void) {
-        _fitting = State(initialValue: fitting)
+        var editable = fitting
+        if editable.isRound {
+            // Normalize V1 labels without breaking existing saved connections.
+            if editable.inletConnection == .flanged && editable.inletSpecial.isEmpty {
+                editable.inletSpecial = "Flanged"
+            }
+            if editable.outletConnection == .flanged && editable.outletSpecial.isEmpty {
+                editable.outletSpecial = "Flanged"
+            }
+            editable.inletConnection = editable.inletConnection.normalizedRound
+            editable.outletConnection = editable.outletConnection.normalizedRound
+        }
+        _fitting = State(initialValue: editable)
         self.area = area
         self.dismissAfterSave = dismissAfterSave
         self.onSave = onSave
     }
     private var isRound: Bool { fitting.isRound }
+    private var isRoundElbow: Bool { fitting.shape.isRoundElbow }
+    private var isRectElbow: Bool { fitting.shape.isRectElbow }
     private var connections: [FabConnection] { isRound ? FabConnection.round : FabConnection.rectangular }
+    private var diameterInput: Binding<Double> {
+        Binding(get: { fitting.inletWidth }, set: { newValue in
+            fitting.inletWidth = newValue
+            fitting.inletHeight = newValue
+            if fitting.shape.isRoundElbow || fitting.shape == .roundStraight {
+                fitting.outletWidth = newValue
+                fitting.outletHeight = newValue
+            }
+        })
+    }
+    private var rectangularWidth: Binding<Double> {
+        Binding(get: { fitting.inletWidth }, set: { newValue in
+            fitting.inletWidth = newValue
+            if fitting.shape.isRectElbow || fitting.shape == .rectStraight { fitting.outletWidth = newValue }
+        })
+    }
+    private var rectangularDepth: Binding<Double> {
+        Binding(get: { fitting.inletHeight }, set: { newValue in
+            fitting.inletHeight = newValue
+            if fitting.shape.isRectElbow || fitting.shape == .rectStraight { fitting.outletHeight = newValue }
+        })
+    }
+    private var elbowAngle: Binding<Int> {
+        Binding(get: { fitting.shape == .roundElbow45 ? 45 : 90 }, set: { selected in
+            fitting.shape = selected == 45 ? .roundElbow45 : .roundElbow90
+            fitting.angle = Double(selected)
+            fitting.outletWidth = fitting.inletWidth
+            fitting.outletHeight = fitting.inletWidth
+        })
+    }
+    private var inputConnection: Binding<FabConnection> {
+        Binding(get: { isRound ? fitting.inletConnection.normalizedRound : fitting.inletConnection },
+                set: { fitting.inletConnection = $0 })
+    }
+    private var outputConnection: Binding<FabConnection> {
+        Binding(get: { isRound ? fitting.outletConnection.normalizedRound : fitting.outletConnection },
+                set: { fitting.outletConnection = $0 })
+    }
     private func number(_ title: String, _ value: Binding<Double>) -> some View {
         HStack {
             Text(title)
@@ -350,38 +418,78 @@ struct FabFittingEditor: View {
             TextField("Inches", value: value, format: .number)
                 .keyboardType(.decimalPad)
                 .multilineTextAlignment(.trailing)
-                .frame(width: 100)
+                .frame(width: 88)
             Text("in").foregroundColor(.secondary)
+        }
+    }
+    private func matched(_ title: String, value: Double) -> some View {
+        HStack {
+            Text(title).foregroundColor(.secondary)
+            Spacer()
+            Text(fabInches(value)).fontWeight(.medium)
+            Text("matched").font(.caption2).foregroundColor(.secondary)
         }
     }
     var body: some View {
         Form {
-                Section("Fitting") {
-                    Text(fitting.shape.rawValue).font(.headline)
-                    TextField("Fitting label (optional)", text: $fitting.name)
-                    Stepper("Quantity: \(fitting.quantity)", value: $fitting.quantity, in: 1...9999)
+            Section("Fitting") {
+                Text(fitting.shape.displayName).font(.headline)
+                TextField("Fitting label (optional)", text: $fitting.name)
+                Stepper("Quantity: \(fitting.quantity)", value: $fitting.quantity, in: 1...9999)
+            }
+            if !fitting.shape.isCustom {
+                Section("Fitting Diagram · Dimension Letters") {
+                    FabFittingGlyph(shape: fitting.shape)
+                        .frame(height: 150)
+                        .frame(maxWidth: .infinity)
+                    Text(fitting.dimensionLegend)
+                        .font(.caption).foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
                 Section("Dimensions — Finished Inches") {
-                    number(isRound ? "Inlet diameter" : "Inlet width", $fitting.inletWidth)
-                    if !isRound { number("Inlet height", $fitting.inletHeight) }
-                    if fitting.shape.needsOutlet {
-                        number(isRound || fitting.shape == .squareRound ? "Outlet diameter" : "Outlet width", $fitting.outletWidth)
-                        if !isRound && fitting.shape != .squareRound { number("Outlet height", $fitting.outletHeight) }
+                    if isRound {
+                        number("A — Diameter In", diameterInput)
+                        if isRoundElbow || fitting.shape == .roundStraight {
+                            matched("C — Diameter Out", value: fitting.inletWidth)
+                        } else {
+                            number("C — Diameter Out", $fitting.outletWidth)
+                        }
+                    } else {
+                        number("A — Width In", rectangularWidth)
+                        number("B — Depth In", rectangularDepth)
+                        if isRectElbow || fitting.shape == .rectStraight {
+                            matched("C — Width Out", value: fitting.inletWidth)
+                            matched("D — Depth Out", value: fitting.inletHeight)
+                        } else if fitting.shape == .squareRound {
+                            number("C — Diameter Out", $fitting.outletWidth)
+                        } else if fitting.shape.needsOutlet {
+                            number("C — Width Out", $fitting.outletWidth)
+                            number("D — Depth Out", $fitting.outletHeight)
+                        }
                     }
-                    number(fitting.shape.isElbow ? "Reference length" : "Overall length", $fitting.length)
-                    if fitting.shape.isElbow {
-                        number("Centerline radius", $fitting.radius)
-                        Picker("Bend plane", selection: $fitting.elbowPlane) {
-                            ForEach(FabElbowPlane.allCases) { Text($0.rawValue).tag($0) }
+                    if isRoundElbow {
+                        Picker("J — Elbow Angle", selection: elbowAngle) {
+                            Text("90°").tag(90)
+                            Text("45°").tag(45)
+                        }.pickerStyle(.segmented)
+                    } else if isRectElbow {
+                        HStack {
+                            Text("J — Elbow Angle")
+                            Spacer()
+                            Text(fitting.shape == .rectElbow45 ? "45°" : "90°")
+                        }
+                        number("K — Throat Straight In", $fitting.straightIn)
+                        number("L — Throat Straight Out", $fitting.straightOut)
+                    } else {
+                        number("E — Overall Length", $fitting.length)
+                        if !fitting.shape.isStraight {
+                            number("K — Straight In", $fitting.straightIn)
+                            number("L — Straight Out", $fitting.straightOut)
                         }
                     }
                     if fitting.shape == .roundTee {
-                        number("Branch diameter", $fitting.branchDiameter)
-                        number("Lateral angle", $fitting.angle)
-                    }
-                    if !fitting.shape.isElbow {
-                        number("Straight in", $fitting.straightIn)
-                        number("Straight out", $fitting.straightOut)
+                        number("M — Branch Diameter", $fitting.branchDiameter)
+                        number("J — Lateral Angle", $fitting.angle)
                     }
                 }
                 if fitting.shape.isTransition {
@@ -389,28 +497,36 @@ struct FabFittingEditor: View {
                         Picker("Vertical", selection: $fitting.verticalAlignment) {
                             ForEach(FabVerticalAlignment.allCases) { Text($0.rawValue).tag($0) }
                         }
-                        if fitting.verticalAlignment != .centered { number("Vertical value", $fitting.verticalValue) }
+                        if fitting.verticalAlignment != .centered {
+                            number("G — Vertical Alignment Value", $fitting.verticalValue)
+                        }
                         Picker("Horizontal", selection: $fitting.horizontalAlignment) {
                             ForEach(FabHorizontalAlignment.allCases) { Text($0.rawValue).tag($0) }
                         }
-                        if fitting.horizontalAlignment == .centerShift { number("Horizontal center shift", $fitting.horizontalValue) }
-                        Text("Outlet center displacement: X \(fabInches(fitting.offsetX)), Y \(fabInches(fitting.offsetY))")
+                        if fitting.horizontalAlignment == .centerShift {
+                            number("F — Horizontal Center Shift", $fitting.horizontalValue)
+                        }
+                        Text("F — Outlet X shift \(fabInches(fitting.offsetX)) · G — Outlet Y shift \(fabInches(fitting.offsetY))")
                             .font(.caption).foregroundColor(.secondary)
                         if !isRound {
-                            Text("Top drop \(fabInches(fitting.topChange)) · Bottom rise \(fabInches(fitting.bottomChange))")
+                            Text("Top change \(fabInches(fitting.topChange)) · Bottom change \(fabInches(fitting.bottomChange))")
                                 .font(.caption).foregroundColor(.secondary)
                         }
                     }
                 }
                 Section("Connections") {
-                    Picker("Inlet", selection: $fitting.inletConnection) {
+                    Picker("Connection In", selection: inputConnection) {
                         ForEach(connections) { Text($0.rawValue).tag($0) }
                     }
-                    if fitting.inletConnection == .special { TextField("Inlet connection details", text: $fitting.inletSpecial) }
-                    Picker("Outlet", selection: $fitting.outletConnection) {
+                    if inputConnection.wrappedValue == .custom || inputConnection.wrappedValue == .special {
+                        TextField("Custom connection In", text: $fitting.inletSpecial)
+                    }
+                    Picker("Connection Out", selection: outputConnection) {
                         ForEach(connections) { Text($0.rawValue).tag($0) }
                     }
-                    if fitting.outletConnection == .special { TextField("Outlet connection details", text: $fitting.outletSpecial) }
+                    if outputConnection.wrappedValue == .custom || outputConnection.wrappedValue == .special {
+                        TextField("Custom connection Out", text: $fitting.outletSpecial)
+                    }
                 }
                 if isRound {
                     Section("Round Insulation") {
@@ -438,7 +554,7 @@ struct FabFittingEditor: View {
                             }
                             .disabled(fitting.roundThicknessOverride == nil && area != nil)
                         }
-                        Text("Area defaults can be overridden independently for type and thickness.")
+                        Text("Defaults can be overridden independently for type and thickness.")
                             .font(.caption).foregroundColor(.secondary)
                     }
                 } else {
@@ -452,35 +568,125 @@ struct FabFittingEditor: View {
                             set: { fitting.linerOverride = $0 }
                         )) {
                             ForEach(FabLiner.allCases) { Text($0.rawValue).tag($0) }
-                        }
-                        .disabled(fitting.linerOverride == nil && area != nil)
-                    }
-                }
-                Section("Shop Notes") {
-                    TextEditor(text: $fitting.notes).frame(minHeight: 78)
-                }
-                Section {
-                    Text("Dimensions are entered exactly as specified. No automatic liner or insulation allowance is applied. PDF drawings are assembly schematics, not developed patterns.")
-                        .font(.footnote).foregroundColor(.secondary)
-                }
-            }
-            .navigationTitle("Fitting Details")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        if fitting.validationMessage != nil { showError = true }
-                        else {
-                            onSave(fitting)
-                            if dismissAfterSave { dismiss() }
-                        }
+                        }.disabled(fitting.linerOverride == nil && area != nil)
                     }
                 }
             }
-            .alert("Check Measurements", isPresented: $showError) {
-                Button("OK") {}
-            } message: { Text(fitting.validationMessage ?? "Please check your fitting.") }
+            Section(fitting.shape.isCustom ? "Describe Custom Fitting (Required)" : "Shop Notes") {
+                TextEditor(text: $fitting.notes).frame(minHeight: 78)
+            }
+            Section {
+                Text("Dimensions are finished inches; liner and insulation never automatically change the entered measurements. Drawings are labeled schematics, not flat patterns.")
+                    .font(.footnote).foregroundColor(.secondary)
+            }
+        }
+        .navigationTitle("Fitting Details")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    if fitting.validationMessage != nil { showError = true }
+                    else {
+                        onSave(fitting)
+                        if dismissAfterSave { dismiss() }
+                    }
+                }
+            }
+        }
+        .alert("Check Measurements", isPresented: $showError) {
+            Button("OK") {}
+        } message: { Text(fitting.validationMessage ?? "Please check your fitting.") }
+    }
+}
+
+// Original monochrome schematic icon artwork, not derived from third-party images.
+// A/B and C/D stay consistent from the icon through the PDF and input form.
+struct FabFittingGlyph: View {
+    let shape: FabShape
+    var body: some View {
+        Canvas { context, size in
+            let w = size.width, h = size.height
+            func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: w * x / 100, y: h * y / 100) }
+            var outline = Path()
+            func line(_ a: (CGFloat, CGFloat), _ b: (CGFloat, CGFloat)) {
+                outline.move(to: point(a.0, a.1)); outline.addLine(to: point(b.0, b.1))
+            }
+            func label(_ title: String, _ x: CGFloat, _ y: CGFloat) {
+                context.draw(Text(title).font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary),
+                             at: point(x, y))
+            }
+            switch shape {
+            case .rectStraight, .roundStraight:
+                outline.addRect(CGRect(x: w*0.20, y: h*0.32, width: w*0.60, height: h*0.36))
+                if shape.isRound {
+                    outline.addEllipse(in: CGRect(x: w*0.18, y: h*0.32, width: w*0.10, height: h*0.36))
+                    outline.addEllipse(in: CGRect(x: w*0.74, y: h*0.32, width: w*0.10, height: h*0.36))
+                }
+            case .rectTransition, .squareRound, .roundReducer, .roundEccentric:
+                line((17,27),(32,27)); line((32,27),(67,37)); line((67,37),(82,37))
+                line((17,73),(32,73)); line((32,73),(67,63)); line((67,63),(82,63))
+                line((17,27),(17,73)); line((82,37),(82,63))
+                if shape.isRound {
+                    outline.addEllipse(in: CGRect(x:w*0.14,y:h*0.27,width:w*0.075,height:h*0.46))
+                    outline.addEllipse(in: CGRect(x:w*0.78,y:h*0.37,width:w*0.075,height:h*0.26))
+                }
+            case .rectOffset, .roundOffset:
+                line((13,31),(33,31)); line((33,31),(65,45)); line((65,45),(87,45))
+                line((13,58),(33,58)); line((33,58),(65,72)); line((65,72),(87,72))
+                line((13,31),(13,58)); line((87,45),(87,72))
+            case .rectElbow90, .rectElbow45:
+                if shape == .rectElbow90 {
+                    line((18,81),(18,19)); line((18,19),(80,19)); line((80,19),(80,81))
+                    line((18,81),(80,81))
+                    for i in 0..<5 {
+                        let x = CGFloat(28 + i*10)
+                        outline.move(to: point(x, 77 - CGFloat(i)*10))
+                        outline.addQuadCurve(to: point(x+13, 79 - CGFloat(i)*10), control: point(x+1, 92 - CGFloat(i)*10))
+                    }
+                } else {
+                    outline.move(to: point(18,80)); outline.addLine(to: point(18,46))
+                    outline.addLine(to: point(54,12)); outline.addLine(to: point(84,44))
+                    outline.addLine(to: point(60,66)); outline.addLine(to: point(78,80)); outline.closeSubpath()
+                }
+            case .roundElbow45, .roundElbow90:
+                let high: CGFloat = shape == .roundElbow45 ? 30 : 15
+                outline.move(to: point(12,79)); outline.addLine(to: point(38,79))
+                outline.addQuadCurve(to: point(80,high), control: point(80,79))
+                outline.move(to: point(12,60)); outline.addLine(to: point(38,60))
+                outline.addQuadCurve(to: point(61,high), control: point(61,60))
+            case .roundTee:
+                line((12,40),(88,40)); line((12,64),(88,64))
+                line((12,40),(12,64)); line((88,40),(88,64))
+                line((43,40),(43,14)); line((63,40),(63,14)); line((43,14),(63,14))
+            case .custom:
+                outline.addRect(CGRect(x:w*0.20,y:h*0.20,width:w*0.60,height:h*0.60))
+            }
+            context.stroke(outline, with: .color(.primary), style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+            if shape.isCustom {
+                label("?",50,50)
+            } else if shape.isRoundElbow {
+                label("A",8,54); label("C",85,14); label("J",53,48)
+            } else if shape.isRectElbow {
+                label("A",8,77); label("B",22,91); label("C",83,15); label("D",92,36)
+                label("K",37,9); label("L",91,73)
+            } else {
+                label("A",9,38)
+                if !shape.isRound { label("B",9,64) }
+                label("C",92,40)
+                if !shape.isRound && shape != .squareRound { label("D",92,64) }
+                if shape.isTransition {
+                    label("E",48,91)
+                    label("F",48,16)
+                    label("G",68,82)
+                } else if shape.isStraight {
+                    label("E",50,86)
+                }
+            }
+        }
+        .accessibilityLabel(Text(shape.displayName + " dimension key illustration"))
     }
 }
 

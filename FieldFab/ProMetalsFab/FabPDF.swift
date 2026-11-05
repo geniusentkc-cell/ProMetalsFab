@@ -70,58 +70,88 @@ enum FabPDFExporter {
         divider.lineWidth = 0.8; UIColor.lightGray.setStroke(); divider.stroke()
         let title = f.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? f.shape.rawValue : f.name
         drawText("ITEM \(index)  ·  \(title)", x: leftX, y: rect.minY + 7, w: 250, size: 10, bold: true)
-        drawText(f.shape.rawValue + "  ·  " + (area?.name ?? "Job Root"), x: leftX, y: rect.minY + 23, w: 248, size: 8, color: .darkGray)
-        drawText("TOP / PLAN", x: leftX + 9, y: rect.minY + 40, w: 112, size: 7, bold: true, color: .darkGray, align: .center)
-        drawText("SIDE / ELEVATION", x: leftX + 133, y: rect.minY + 40, w: 112, size: 7, bold: true, color: .darkGray, align: .center)
+        drawText(f.shape.displayName + "  ·  " + (area?.name ?? "Job Root"), x: leftX, y: rect.minY + 23, w: 248, size: 8, color: .darkGray)
+        let isElbow = f.shape.isElbow
+        drawText(isElbow ? "BEND / SCHEMATIC" : "TOP / PLAN", x: leftX + 9, y: rect.minY + 40, w: 112, size: 7, bold: true, color: .darkGray, align: .center)
+        drawText(isElbow ? "END / SECTION" : "SIDE / ELEVATION", x: leftX + 133, y: rect.minY + 40, w: 112, size: 7, bold: true, color: .darkGray, align: .center)
         drawAssembly(f, origin: CGPoint(x: leftX + 10, y: rect.minY + 54), width: 112, height: 77, plan: true)
         drawAssembly(f, origin: CGPoint(x: leftX + 134, y: rect.minY + 54), width: 112, height: 77, plan: false)
         drawText("Entered dimensions · no insulation allowance", x: leftX, y: rect.maxY - 16, w: 255, size: 7, color: .gray)
 
         let x = detailsX
-        let w: CGFloat = 290
-        let line: CGFloat = 13
+        let w: CGFloat = 270
         var y = rect.minY + 8
-        drawText("QTY  \(f.quantity)", x: x, y: y, w: 79, size: 10, bold: true)
-        drawText(f.shape.isRound ? "ROUND" : "RECTANGULAR", x: x + 85, y: y, w: w - 85, size: 9, bold: true, color: .darkGray)
-        y += 18
-        let inlet = f.isRound ? "Ø \(fabInches(f.inletWidth))" : "\(fabInches(f.inletWidth)) W × \(fabInches(f.inletHeight)) H"
-        drawText("IN  \(inlet)", x: x, y: y, w: w, size: 9); y += line
-        if f.shape.needsOutlet {
-            let outlet = f.isRound || f.shape == .squareRound ? "Ø \(fabInches(f.outletWidth))" : "\(fabInches(f.outletWidth)) W × \(fabInches(f.outletHeight)) H"
-            drawText("OUT  \(outlet)", x: x, y: y, w: w, size: 9); y += line
-        }
-        drawText("LENGTH  \(fabInches(f.length))   ·   STRAIGHT IN/OUT \(fabInches(f.straightIn)) / \(fabInches(f.straightOut))", x: x, y: y, w: w, size: 8); y += line
-        if f.shape.isTransition {
-            let direction = "X \(fabInches(f.offsetX))  ·  Y \(fabInches(f.offsetY))"
-            drawText("OFFSET  \(direction)", x: x, y: y, w: w, size: 8); y += line
-            let vertical = f.verticalAlignment == .centered ? "Centered" :
-                (f.verticalAlignment.rawValue + " " + fabInches(f.verticalValue))
-            let horizontal = f.horizontalAlignment == .centered ? "Centered" :
-                (f.horizontalAlignment.rawValue + (f.horizontalAlignment == .centerShift ? " " + fabInches(f.horizontalValue) : ""))
-            drawText("ALIGN  V: \(vertical) / H: \(horizontal)", x: x, y: y, w: w, size: 8); y += line
-        } else if f.shape.isElbow {
-            drawText("ELBOW  \(fabInches(f.radius)) radius · \(Int(f.angle))° · \(f.elbowPlane == .horizontal ? "Horizontal" : "Vertical")", x: x, y: y, w: w, size: 8); y += line
-        } else if f.shape == .roundTee {
-            drawText("BRANCH Ø \(fabInches(f.branchDiameter))  ·  \(Int(f.angle))°", x: x, y: y, w: w, size: 8); y += line
-        }
-        drawText("CONN  IN \(f.inletLabel())  /  OUT \(f.outletLabel())", x: x, y: y, w: w, size: 8); y += line
-        if f.isRound {
-            let type = f.effectiveRoundInsulation(in: area)
-            let detail = type == .none ? "None" : "\(type.rawValue)  ·  \(f.effectiveRoundThickness(in: area).rawValue)"
-            drawText("INSUL  \(detail)", x: x, y: y, w: w, size: 8); y += line
+        drawText("QTY  \(f.quantity)", x: x, y: y, w: 80, size: 10, bold: true)
+        drawText(f.shape.isCustom ? "SPECIAL REQUEST" : (f.isRound ? "ROUND" : "RECTANGULAR"),
+                 x: x + 87, y: y, w: w - 87, size: 9, bold: true, color: .darkGray)
+        y += 19
+        var details: [String] = []
+        if !f.shape.isCustom {
+            if f.isRound {
+                let diaOut = f.shape.isRoundElbow || f.shape == .roundStraight ? f.inletWidth : f.outletWidth
+                details.append("A DIA IN \(fabInches(f.inletWidth))  ·  C DIA OUT \(fabInches(diaOut))")
+            } else {
+                details.append("A WI \(fabInches(f.inletWidth))  ·  B DI \(fabInches(f.inletHeight))")
+                if f.shape == .squareRound {
+                    details.append("C DIA OUT \(fabInches(f.outletWidth))")
+                } else {
+                    let widthOut = f.shape.isRectElbow || f.shape == .rectStraight ? f.inletWidth : f.outletWidth
+                    let depthOut = f.shape.isRectElbow || f.shape == .rectStraight ? f.inletHeight : f.outletHeight
+                    details.append("C WO \(fabInches(widthOut))  ·  D DO \(fabInches(depthOut))")
+                }
+            }
+            if f.shape.isRoundElbow {
+                details.append("J ELBOW ANGLE \(f.shape == .roundElbow45 ? "45°" : "90°")")
+            } else if f.shape.isRectElbow {
+                details.append("J ELBOW ANGLE \(f.shape == .rectElbow45 ? "45°" : "90°")")
+                details.append("K THROAT IN \(fabInches(f.straightIn))  ·  L THROAT OUT \(fabInches(f.straightOut))")
+            } else {
+                details.append("E LENGTH \(fabInches(f.length))")
+                if !f.shape.isStraight {
+                    details.append("K STR IN \(fabInches(f.straightIn))  ·  L STR OUT \(fabInches(f.straightOut))")
+                }
+            }
+            if f.shape.isTransition {
+                details.append("F X SHIFT \(fabInches(f.offsetX))  ·  G Y SHIFT \(fabInches(f.offsetY))")
+                let vertical = f.verticalAlignment == .centered ? "Centered" :
+                    (f.verticalAlignment.rawValue + " " + fabInches(f.verticalValue))
+                let horizontal = f.horizontalAlignment == .centered ? "Centered" :
+                    (f.horizontalAlignment.rawValue + (f.horizontalAlignment == .centerShift ? " " + fabInches(f.horizontalValue) : ""))
+                details.append("ALIGN V: \(vertical) / H: \(horizontal)")
+            } else if f.shape == .roundTee {
+                details.append("M BRANCH DIA \(fabInches(f.branchDiameter))  ·  J ANGLE \(Int(f.angle))°")
+            }
+            details.append("CONN IN \(f.inletLabel())  /  OUT \(f.outletLabel())")
+            if f.isRound {
+                let type = f.effectiveRoundInsulation(in: area)
+                let insulation = type == .none ? "None" : "\(type.rawValue) \(f.effectiveRoundThickness(in: area).rawValue)"
+                details.append("INSUL \(insulation)")
+            } else {
+                details.append("LINER \(f.effectiveLiner(in: area).rawValue)")
+            }
         } else {
-            drawText("LINER  \(f.effectiveLiner(in: area).rawValue)", x: x, y: y, w: w, size: 8); y += line
+            details.append("Refer to written custom fitting instructions")
         }
-        if !f.notes.isEmpty {
-            let maxHeight = max(CGFloat(11), rect.maxY - y - 7)
-            drawText("NOTES  " + f.notes.replacingOccurrences(of: "\n", with: "  "), x: x, y: y, w: w, size: 8, color: .darkGray, maxHeight: maxHeight)
+        for detail in details {
+            if y > rect.maxY - 12 { break }
+            drawText(detail, x: x, y: y, w: w, size: 7.7, maxHeight: 12)
+            y += 12
+        }
+        if !f.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let space = rect.maxY - y - 5
+            if space > 8 {
+                drawText("NOTES  " + f.notes.replacingOccurrences(of: "\n", with: "  "),
+                         x: x, y: y, w: w, size: 7.5, color: .darkGray,
+                         maxHeight: space, wrap: true)
+            }
         }
     }
 
     private static func drawText(_ string: String, x: CGFloat, y: CGFloat, w: CGFloat, size: CGFloat,
                                  bold: Bool = false, color: UIColor = .black, align: NSTextAlignment = .left,
-                                 maxHeight: CGFloat = 30) {
-        let para = NSMutableParagraphStyle(); para.alignment = align; para.lineBreakMode = .byTruncatingTail
+                                 maxHeight: CGFloat = 30, wrap: Bool = false) {
+        let para = NSMutableParagraphStyle(); para.alignment = align
+        para.lineBreakMode = wrap ? .byWordWrapping : .byTruncatingTail
         let attr: [NSAttributedString.Key: Any] = [
             .font: bold ? UIFont.boldSystemFont(ofSize: size) : UIFont.systemFont(ofSize: size),
             .foregroundColor: color, .paragraphStyle: para]
@@ -135,14 +165,24 @@ enum FabPDFExporter {
         let r = CGRect(x: origin.x, y: origin.y, width: width, height: height)
         let stroke = UIColor(red: 0.12, green: 0.32, blue: 0.53, alpha: 1)
         stroke.setStroke()
-        if f.shape.isElbow && ((f.elbowPlane == .horizontal && plan) || (f.elbowPlane == .vertical && !plan)) {
-            drawElbow(in: r, angle: f.angle, stroke: stroke)
+        if f.shape.isCustom {
+            drawText("CUSTOM FITTING", x: r.minX, y: r.midY - 7, w: r.width, size: 8,
+                     bold: true, color: .darkGray, align: .center)
+            return
+        }
+        if f.shape.isElbow && plan {
+            if f.shape.isRectElbow {
+                drawRectElbow(in: r, angle: f.angle, throatIn: f.straightIn,
+                              throatOut: f.straightOut, stroke: stroke)
+            } else {
+                drawElbow(in: r, angle: f.shape == .roundElbow45 ? 45 : 90, stroke: stroke)
+            }
         } else if f.shape == .roundTee {
             drawTee(in: r, stroke: stroke)
         } else {
             let leftSize: Double = plan ? f.inletWidth : (f.isRound ? f.inletWidth : f.inletHeight)
             let rightSize: Double = f.shape.needsOutlet ? (plan ? f.outletWidth : (f.effectiveOutletHeight)) : leftSize
-            let shift: Double = plan ? f.offsetX : f.offsetY
+            let shift: Double = f.shape.isElbow ? 0 : (plan ? f.offsetX : f.offsetY)
             let maxSpan: Double = Swift.max(leftSize, rightSize) + Swift.abs(shift) * 2.0
             let scale: CGFloat = Swift.min(CGFloat(2.65), CGFloat(56.0) / CGFloat(Swift.max(maxSpan, 1.0)))
             let cy = r.midY
@@ -170,9 +210,50 @@ enum FabPDFExporter {
             axis.lineWidth = 0.4; axis.setLineDash([3, 3], count: 2, phase: 0); UIColor.gray.setStroke(); axis.stroke()
             stroke.setStroke()
         }
-        let dimension = plan ? f.inletWidth : (f.isRound ? f.inletWidth : f.inletHeight)
-        let outletDimension = f.shape.needsOutlet ? (plan ? f.outletWidth : f.effectiveOutletHeight) : dimension
-        drawText("IN \(fabInches(dimension))  →  OUT \(fabInches(outletDimension))", x: r.minX - 2, y: r.maxY - 5, w: r.width + 4, size: 6.5, color: .darkGray, align: .center)
+        let leftKey = plan ? "A" : (f.isRound ? "A" : "B")
+        let rightKey = plan ? "C" : (f.isRound ? "C" : "D")
+        let initial = plan || f.isRound ? f.inletWidth : f.inletHeight
+        let final: Double
+        if f.shape.isRoundElbow || f.shape.isRectElbow || f.shape.isStraight {
+            final = initial
+        } else if f.shape.needsOutlet {
+            final = plan ? f.outletWidth : f.effectiveOutletHeight
+        } else {
+            final = initial
+        }
+        drawText("\(leftKey) \(fabInches(initial))  →  \(rightKey) \(fabInches(final))",
+                 x: r.minX - 2, y: r.maxY - 5, w: r.width + 4,
+                 size: 6.5, color: .darkGray, align: .center)
+    }
+    private static func drawRectElbow(in rect: CGRect, angle: Double,
+                                      throatIn: Double, throatOut: Double, stroke: UIColor) {
+        let path = UIBezierPath()
+        if angle < 70 {
+            path.move(to: CGPoint(x: rect.minX + 12, y: rect.maxY - 14))
+            path.addLine(to: CGPoint(x: rect.minX + 12, y: rect.midY))
+            path.addLine(to: CGPoint(x: rect.midX + 6, y: rect.minY + 5))
+            path.addLine(to: CGPoint(x: rect.maxX - 8, y: rect.midY - 3))
+            path.addLine(to: CGPoint(x: rect.midX + 20, y: rect.maxY - 14))
+        } else {
+            path.move(to: CGPoint(x: rect.minX + 13, y: rect.maxY - 10))
+            path.addLine(to: CGPoint(x: rect.minX + 13, y: rect.minY + 7))
+            path.addLine(to: CGPoint(x: rect.maxX - 12, y: rect.minY + 7))
+            path.addLine(to: CGPoint(x: rect.maxX - 12, y: rect.maxY - 10))
+            path.addLine(to: CGPoint(x: rect.minX + 13, y: rect.maxY - 10))
+            // Turning-vane strokes visually distinguish the mitered elbow schematic.
+            for index in 0..<5 {
+                let shift = CGFloat(index) * 10
+                path.move(to: CGPoint(x: rect.minX + 19 + shift, y: rect.maxY - 16 - shift * 0.6))
+                path.addQuadCurve(to: CGPoint(x: rect.minX + 32 + shift, y: rect.maxY - 18 - shift * 0.6),
+                                  controlPoint: CGPoint(x: rect.minX + 22 + shift, y: rect.maxY - 5 - shift * 0.6))
+            }
+        }
+        path.lineWidth = 1.4
+        stroke.setStroke(); path.stroke()
+        drawText("K \(fabInches(throatIn))", x: rect.minX + 7, y: rect.minY, w: 54,
+                 size: 6.5, color: .darkGray)
+        drawText("L \(fabInches(throatOut))", x: rect.maxX - 62, y: rect.maxY - 14,
+                 w: 62, size: 6.5, color: .darkGray, align: .right)
     }
     private static func drawElbow(in rect: CGRect, angle: Double, stroke: UIColor) {
         if angle < 70 {

@@ -17,7 +17,16 @@ enum FabShape: String, Codable, CaseIterable, Identifiable {
     case roundElbow90 = "Round 90° Elbow"
     case roundOffset = "Round Offset"
     case roundTee = "Round Tee / Lateral"
+    case custom = "Custom Fitting"
     var id: String { rawValue }
+    // Keep both underlying elbow cases for previously saved jobs, but display one
+    // selectable round elbow with an angle picker.
+    static var libraryChoices: [FabShape] { allCases.filter { $0 != .roundElbow45 } }
+    var displayName: String { isRoundElbow ? "Round Elbow" : rawValue }
+    var isRectElbow: Bool { self == .rectElbow45 || self == .rectElbow90 }
+    var isRoundElbow: Bool { self == .roundElbow45 || self == .roundElbow90 }
+    var isStraight: Bool { self == .rectStraight || self == .roundStraight }
+    var isCustom: Bool { self == .custom }
     var isRound: Bool {
         switch self {
         case .roundStraight, .roundReducer, .roundEccentric, .roundElbow45,
@@ -32,10 +41,20 @@ enum FabShape: String, Codable, CaseIterable, Identifiable {
 
 enum FabConnection: String, Codable, CaseIterable, Identifiable {
     case slipDrive = "S&D", driveSlip = "D&S", tdf = "TDF", special = "Special"
+    // Older names are retained so V1 saved jobs remain decodable.
     case plain = "Plain", beaded = "Beaded", flanged = "Flanged"
+    case raw = "Raw", bead = "Bead", custom = "Custom"
     var id: String { rawValue }
     static var rectangular: [FabConnection] { [.slipDrive, .driveSlip, .tdf, .special] }
-    static var round: [FabConnection] { [.plain, .beaded, .flanged, .special] }
+    static var round: [FabConnection] { [.raw, .bead, .custom] }
+    var normalizedRound: FabConnection {
+        switch self {
+        case .plain: return .raw
+        case .beaded: return .bead
+        case .special, .flanged: return .custom
+        default: return self
+        }
+    }
 }
 
 enum FabRoundInsulation: String, Codable, CaseIterable, Identifiable {
@@ -113,14 +132,30 @@ struct FabFitting: Codable, Identifiable, Equatable {
     func effectiveLiner(in area: FabArea?) -> FabLiner { linerOverride ?? area?.rectangularLiner ?? .none }
     func effectiveRoundInsulation(in area: FabArea?) -> FabRoundInsulation { roundInsulationOverride ?? area?.roundInsulation ?? .none }
     func effectiveRoundThickness(in area: FabArea?) -> FabThickness { roundThicknessOverride ?? area?.roundThickness ?? .one }
-    func inletLabel() -> String { inletConnection == .special ? "Special: " + inletSpecial : inletConnection.rawValue }
-    func outletLabel() -> String { outletConnection == .special ? "Special: " + outletSpecial : outletConnection.rawValue }
+    var effectiveOutletWidth: Double { shape.isRoundElbow || shape.isStraight || shape.isRectElbow ? inletWidth : outletWidth }
+    var effectiveOutletDepth: Double { shape.isRoundElbow || shape.isStraight || shape.isRectElbow ? inletHeight : outletHeight }
+    private func connectionLabel(_ connection: FabConnection, description: String) -> String {
+        let selected = isRound ? connection.normalizedRound : connection
+        if selected == .special || selected == .custom {
+            return "Custom: " + (description.isEmpty ? "Unspecified" : description)
+        }
+        return selected.rawValue
+    }
+    func inletLabel() -> String { connectionLabel(inletConnection, description: inletSpecial) }
+    func outletLabel() -> String { connectionLabel(outletConnection, description: outletSpecial) }
+    var dimensionLegend: String {
+        if shape.isCustom { return "Describe custom fitting in Notes" }
+        if shape.isRoundElbow { return "A Diameter In = C Diameter Out · J Angle" }
+        if shape.isRound { return "A Diameter In · C Diameter Out · E Length" }
+        if shape.isRectElbow { return "A/B In · C/D Out · K/L Throat Straights" }
+        return "A Width In · B Depth In · C Width Out · D Depth Out · E Length"
+    }
 
     // Center displacement of the outlet, relative to inlet, in finished inches.
     // Positive Y is up; a Top Down value of 2 lowers the outlet's top by 2.
     var offsetY: Double {
-        let input = inletHeight
-        let output = shape.needsOutlet ? effectiveOutletHeight : inletHeight
+        let input = shape.isRound ? inletWidth : inletHeight
+        let output = shape.needsOutlet ? effectiveOutletHeight : input
         switch verticalAlignment {
         case .centered: return 0
         case .topDown: return (input - output) / 2 - verticalValue
@@ -145,11 +180,32 @@ struct FabFitting: Codable, Identifiable, Equatable {
     var rightChange: Double { (inletWidth - (shape.needsOutlet ? outletWidth : inletWidth)) / 2 - offsetX }
     var validationMessage: String? {
         guard quantity > 0 else { return "Quantity must be at least 1." }
-        guard inletWidth > 0, inletHeight > 0, length > 0 else { return "Inlet sizes and length must be greater than zero." }
-        guard shape.isElbow || (straightIn >= 0 && straightOut >= 0 && straightIn + straightOut <= length) else { return "Straight-in plus straight-out must not exceed total length." }
-        if shape.needsOutlet && (outletWidth <= 0 || (!shape.isRound && shape != .squareRound && outletHeight <= 0)) { return "Outlet sizes must be greater than zero." }
-        if shape.isElbow && radius <= 0 { return "Elbow centerline radius must be greater than zero." }
+        if shape.isCustom {
+            return notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Describe the custom fitting in Shop Notes." : nil
+        }
+        let values = [inletWidth, inletHeight, outletWidth, outletHeight, length,
+                      straightIn, straightOut, angle, radius, branchDiameter,
+                      verticalValue, horizontalValue]
+        guard values.allSatisfy({ $0.isFinite }) else { return "Measurements must be valid finite numbers." }
+        guard inletWidth > 0, (!shape.isRound && inletHeight > 0 || shape.isRound) else {
+            return "Inlet dimensions must be greater than zero."
+        }
+        if !shape.isElbow && length <= 0 { return "Length must be greater than zero." }
+        if shape.needsOutlet && (outletWidth <= 0 || (!shape.isRound && shape != .squareRound && outletHeight <= 0)) {
+            return "Outlet dimensions must be greater than zero."
+        }
+        if shape.isRectElbow && (straightIn < 0 || straightOut < 0) {
+            return "Throat straight lengths cannot be negative."
+        }
+        if !shape.isElbow && !shape.isStraight && (straightIn < 0 || straightOut < 0 || straightIn + straightOut > length) {
+            return "Straight-in plus straight-out must not exceed overall length."
+        }
         if shape == .roundTee && branchDiameter <= 0 { return "Branch diameter must be greater than zero." }
+        if shape.isRound && (inletConnection.normalizedRound == .custom && inletSpecial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                             outletConnection.normalizedRound == .custom && outletSpecial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+            return "Enter the description for each Custom round connection."
+        }
         return nil
     }
     static func new(shape: FabShape, areaID: UUID?) -> FabFitting {
@@ -159,9 +215,16 @@ struct FabFitting: Codable, Identifiable, Equatable {
         if shape.isRound {
             fitting.inletWidth = 12; fitting.inletHeight = 12
             fitting.outletWidth = 8; fitting.outletHeight = 8
-            fitting.inletConnection = .plain; fitting.outletConnection = .plain
+            fitting.inletConnection = .raw; fitting.outletConnection = .raw
         }
         if shape == .rectStraight || shape == .roundStraight || shape == .rectOffset || shape == .roundOffset || shape == .roundTee {
+            fitting.outletWidth = fitting.inletWidth; fitting.outletHeight = fitting.inletHeight
+        }
+        if shape.isRectElbow {
+            fitting.straightIn = 6; fitting.straightOut = 6
+            fitting.outletWidth = fitting.inletWidth; fitting.outletHeight = fitting.inletHeight
+        }
+        if shape.isRoundElbow {
             fitting.outletWidth = fitting.inletWidth; fitting.outletHeight = fitting.inletHeight
         }
         if shape == .roundEccentric { fitting.verticalAlignment = .topDown }
