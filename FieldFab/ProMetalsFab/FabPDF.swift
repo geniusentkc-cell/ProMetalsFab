@@ -135,8 +135,11 @@ enum FabPDFExporter {
                     details.append("E THROAT 1 \(fabInches(f.straightIn)) · F THROAT 2 \(fabInches(f.straightOut))")
                 } else if f.shape == .rectRadiusElbow {
                     details.append("E INTERIOR RADIUS \(fabInches(f.radius))")
-                    let s = f.verticalValue
-                    details.append("F TOP \(s < 0 ? "DOWN" : "UP") \(fabInches(abs(s))) (both sides)")
+                    let s: Double = f.verticalValue
+                    let direction: String = s < 0.0 ? "DOWN" : "UP"
+                    let magnitude: Double = Swift.abs(s)
+                    let offsetDescription: String = fabInches(magnitude)
+                    details.append("F TOP \(direction) \(offsetDescription) (both sides)")
                 } else if f.shape == .rectTransition {
                     details.append("LENGTH \(fabInches(f.length)) · STR IN/OUT \(fabInches(f.straightIn))/\(fabInches(f.straightOut))")
                     details.append("LEFT \(fabInches(f.transitionLeft)) · RIGHT \(fabInches(f.transitionRight))")
