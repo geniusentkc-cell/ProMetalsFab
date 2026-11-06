@@ -8,7 +8,10 @@ enum FabShape: String, Codable, CaseIterable, Identifiable {
     case rectTransition = "Rectangular Transition"
     case rectElbow45 = "Rectangular 45° Elbow"
     case rectElbow90 = "Rectangular 90° Elbow"
-    case rectOffset = "Rectangular Offset"
+    case rectOffset = "Rectangular Offset" // legacy V2 jobs
+    case rectRadiusElbow = "Rectangular Radius Elbow"
+    case rectTee = "Rectangular Square Tee"
+    case rectEndCap = "Rectangular End Cap"
     case squareRound = "Square to Round"
     case roundStraight = "Round Straight"
     case roundReducer = "Round Concentric Reducer"
@@ -21,9 +24,30 @@ enum FabShape: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     // Keep both underlying elbow cases for previously saved jobs, but display one
     // selectable round elbow with an angle picker.
-    static var libraryChoices: [FabShape] { allCases.filter { $0 != .roundElbow45 } }
-    var displayName: String { isRoundElbow ? "Round Elbow" : rawValue }
-    var isRectElbow: Bool { self == .rectElbow45 || self == .rectElbow90 }
+    static var libraryChoices: [FabShape] {
+        // The old rectangular offset remains decodable, but is not in the approved V3 catalog.
+        allCases.filter { $0 != .roundElbow45 && $0 != .rectOffset }
+    }
+    var isCatalogRect: Bool {
+        switch self {
+        case .rectStraight, .rectTransition, .rectElbow45, .rectElbow90,
+             .rectRadiusElbow, .rectTee, .squareRound, .rectEndCap: return true
+        default: return false
+        }
+    }
+    var displayName: String {
+        switch self {
+        case .roundElbow45, .roundElbow90: return "Round Elbow"
+        case .rectElbow45: return "45° Square Elbow"
+        case .rectElbow90: return "90° Square Elbow with Vanes"
+        case .rectRadiusElbow: return "Rectangular Radius Elbow"
+        case .rectTee: return "Square Tee"
+        case .rectEndCap: return "Rectangular End Cap"
+        default: return rawValue
+        }
+    }
+    var isRectElbow: Bool { self == .rectElbow45 || self == .rectElbow90 || self == .rectRadiusElbow }
+    var isSquareElbow: Bool { self == .rectElbow45 || self == .rectElbow90 }
     var isRoundElbow: Bool { self == .roundElbow45 || self == .roundElbow90 }
     var isStraight: Bool { self == .rectStraight || self == .roundStraight }
     var isCustom: Bool { self == .custom }
@@ -35,17 +59,17 @@ enum FabShape: String, Codable, CaseIterable, Identifiable {
         }
     }
     var isTransition: Bool { self == .rectTransition || self == .rectOffset || self == .squareRound || self == .roundReducer || self == .roundEccentric || self == .roundOffset }
-    var isElbow: Bool { self == .rectElbow45 || self == .rectElbow90 || self == .roundElbow45 || self == .roundElbow90 }
-    var needsOutlet: Bool { isTransition || self == .roundTee }
+    var isElbow: Bool { isRectElbow || isRoundElbow }
+    var needsOutlet: Bool { isTransition || isRectElbow || self == .roundTee || self == .rectTee }
 }
 
 enum FabConnection: String, Codable, CaseIterable, Identifiable {
     case slipDrive = "S&D", driveSlip = "D&S", tdf = "TDF", special = "Special"
     // Older names are retained so V1 saved jobs remain decodable.
     case plain = "Plain", beaded = "Beaded", flanged = "Flanged"
-    case raw = "Raw", bead = "Bead", custom = "Custom"
+    case raw = "Raw", bead = "Bead", custom = "Custom", flangeOut = "1\" Flange Out"
     var id: String { rawValue }
-    static var rectangular: [FabConnection] { [.slipDrive, .driveSlip, .tdf, .special] }
+    static var rectangular: [FabConnection] { [.slipDrive, .driveSlip, .tdf, .raw, .flangeOut, .custom] }
     static var round: [FabConnection] { [.raw, .bead, .custom] }
     var normalizedRound: FabConnection {
         switch self {
@@ -123,6 +147,17 @@ struct FabFitting: Codable, Identifiable, Equatable {
     var linerOverride: FabLiner? = nil
     var roundInsulationOverride: FabRoundInsulation? = nil
     var roundThicknessOverride: FabThickness? = nil
+    // V3 optional fields: synthesized Codable decoding retains all V1/V2 saved job files.
+    // Square Tee: A/B = main, C/D = left, E/F = right; G,H,I,J = independent throats.
+    var teeRightWidth: Double? = nil
+    var teeRightDepth: Double? = nil
+    var teeThroatG: Double? = nil
+    var teeThroatH: Double? = nil
+    var teeThroatI: Double? = nil
+    var teeThroatJ: Double? = nil
+    var teeRightConnection: FabConnection? = nil
+    var teeRightSpecial: String? = nil
+    var hasDamper: Bool? = nil
     var notes: String = ""
 
     var isRound: Bool { shape.isRound }
@@ -132,8 +167,8 @@ struct FabFitting: Codable, Identifiable, Equatable {
     func effectiveLiner(in area: FabArea?) -> FabLiner { linerOverride ?? area?.rectangularLiner ?? .none }
     func effectiveRoundInsulation(in area: FabArea?) -> FabRoundInsulation { roundInsulationOverride ?? area?.roundInsulation ?? .none }
     func effectiveRoundThickness(in area: FabArea?) -> FabThickness { roundThicknessOverride ?? area?.roundThickness ?? .one }
-    var effectiveOutletWidth: Double { shape.isRoundElbow || shape.isStraight || shape.isRectElbow ? inletWidth : outletWidth }
-    var effectiveOutletDepth: Double { shape.isRoundElbow || shape.isStraight || shape.isRectElbow ? inletHeight : outletHeight }
+    var effectiveOutletWidth: Double { shape.isRoundElbow || shape.isStraight ? inletWidth : outletWidth }
+    var effectiveOutletDepth: Double { shape.isRoundElbow || shape.isStraight ? inletHeight : outletHeight }
     private func connectionLabel(_ connection: FabConnection, description: String) -> String {
         let selected = isRound ? connection.normalizedRound : connection
         if selected == .special || selected == .custom {
@@ -142,12 +177,50 @@ struct FabFitting: Codable, Identifiable, Equatable {
         return selected.rawValue
     }
     func inletLabel() -> String { connectionLabel(inletConnection, description: inletSpecial) }
-    func outletLabel() -> String { connectionLabel(outletConnection, description: outletSpecial) }
+    func outletLabel() -> String {
+        let chosen = (isRound || shape == .squareRound) ? outletConnection.normalizedRound : outletConnection
+        return connectionLabel(chosen, description: outletSpecial)
+    }
+    func teeRightLabel() -> String { connectionLabel(teeRightConnection ?? .slipDrive, description: teeRightSpecial ?? "") }
+    var isDampered: Bool { hasDamper ?? false }
+    var teeE: Double { teeRightWidth ?? inletWidth }
+    var teeF: Double { teeRightDepth ?? inletHeight }
+    var teeG: Double { teeThroatG ?? 6 }
+    var teeH: Double { teeThroatH ?? 6 }
+    var teeI: Double { teeThroatI ?? 6 }
+    var teeJ: Double { teeThroatJ ?? 6 }
+    var transitionLeft: Double { leftChange }
+    var transitionRight: Double { rightChange }
+    var transitionTop: Double { topChange }
+    var transitionBottom: Double { bottomChange }
+    mutating func setTransitionLeft(_ left: Double) {
+        horizontalAlignment = .centerShift
+        horizontalValue = left - (inletWidth - outletWidth)/2
+    }
+    mutating func setTransitionRight(_ right: Double) {
+        setTransitionLeft(inletWidth - outletWidth - right)
+    }
+    mutating func setTransitionTop(_ top: Double) {
+        verticalAlignment = .centerShift
+        verticalValue = (inletHeight - outletHeight)/2 - top
+    }
+    mutating func setTransitionBottom(_ bottom: Double) {
+        setTransitionTop(inletHeight - outletHeight - bottom)
+    }
+    mutating func centerTransition() {
+        verticalAlignment = .centered; verticalValue = 0
+        horizontalAlignment = .centered; horizontalValue = 0
+    }
     var dimensionLegend: String {
         if shape.isCustom { return "Describe custom fitting in Notes" }
         if shape.isRoundElbow { return "A Diameter In = C Diameter Out · J Angle" }
         if shape.isRound { return "A Diameter In · C Diameter Out · E Length" }
-        if shape.isRectElbow { return "A/B In · C/D Out · K/L Throat Straights" }
+        if shape.isSquareElbow { return "A/B = In · C/D = Out · E/F = separate throat lengths" }
+        if shape == .rectRadiusElbow { return "A/B = In · C/D = Out · E = interior radius · F = top shift" }
+        if shape == .rectTee { return "A/B = Bottom · C/D = Left · E/F = Right · G/H/I/J = throats" }
+        if shape == .squareRound { return "A Width · B Depth · C Diameter · D Length" }
+        if shape == .rectEndCap { return "A Width · B Depth" }
+        if shape == .rectTransition { return "A/B = In · C/D = Out · center by default; sides editable" }
         return "A Width In · B Depth In · C Width Out · D Depth Out · E Length"
     }
 
@@ -186,25 +259,45 @@ struct FabFitting: Codable, Identifiable, Equatable {
         }
         let values = [inletWidth, inletHeight, outletWidth, outletHeight, length,
                       straightIn, straightOut, angle, radius, branchDiameter,
-                      verticalValue, horizontalValue]
+                      verticalValue, horizontalValue] +
+                     [teeRightWidth, teeRightDepth, teeThroatG, teeThroatH, teeThroatI, teeThroatJ].compactMap { $0 }
         guard values.allSatisfy({ $0.isFinite }) else { return "Measurements must be valid finite numbers." }
         guard inletWidth > 0, (!shape.isRound && inletHeight > 0 || shape.isRound) else {
             return "Inlet dimensions must be greater than zero."
         }
-        if !shape.isElbow && length <= 0 { return "Length must be greater than zero." }
+        if shape != .rectEndCap && shape != .rectTee && !shape.isElbow && length <= 0 {
+            return "Length must be greater than zero."
+        }
+        if shape == .rectRadiusElbow && radius <= 0 { return "Inside radius must be greater than zero." }
+        if shape == .rectTee {
+            guard teeE > 0, teeF > 0 else { return "The right opening must have positive dimensions." }
+            guard [teeG, teeH, teeI, teeJ].allSatisfy({ $0 >= 0 }) else {
+                return "Tee throat lengths cannot be negative."
+            }
+        }
         if shape.needsOutlet && (outletWidth <= 0 || (!shape.isRound && shape != .squareRound && outletHeight <= 0)) {
             return "Outlet dimensions must be greater than zero."
         }
-        if shape.isRectElbow && (straightIn < 0 || straightOut < 0) {
+        if shape.isSquareElbow && (straightIn < 0 || straightOut < 0) {
             return "Throat straight lengths cannot be negative."
         }
-        if !shape.isElbow && !shape.isStraight && (straightIn < 0 || straightOut < 0 || straightIn + straightOut > length) {
+        if !shape.isElbow && !shape.isStraight && shape != .rectTee && shape != .rectEndCap && (straightIn < 0 || straightOut < 0 || straightIn + straightOut > length) {
             return "Straight-in plus straight-out must not exceed overall length."
         }
         if shape == .roundTee && branchDiameter <= 0 { return "Branch diameter must be greater than zero." }
         if shape.isRound && (inletConnection.normalizedRound == .custom && inletSpecial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                              outletConnection.normalizedRound == .custom && outletSpecial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
             return "Enter the description for each Custom round connection."
+        }
+        func isBlank(_ v: String) -> Bool { v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if inletConnection == .custom || inletConnection == .special {
+            if isBlank(inletSpecial) { return "Describe the custom inlet connection." }
+        }
+        if shape != .rectEndCap && (outletConnection == .custom || outletConnection == .special) {
+            if isBlank(outletSpecial) { return "Describe the custom outlet connection." }
+        }
+        if shape == .rectTee && (teeRightConnection ?? .slipDrive) == .custom && isBlank(teeRightSpecial ?? "") {
+            return "Describe the custom right-branch connection."
         }
         return nil
     }
@@ -224,6 +317,17 @@ struct FabFitting: Codable, Identifiable, Equatable {
             fitting.straightIn = 6; fitting.straightOut = 6
             fitting.outletWidth = fitting.inletWidth; fitting.outletHeight = fitting.inletHeight
         }
+        if shape == .rectRadiusElbow { fitting.radius = 12; fitting.verticalAlignment = .centerShift }
+        if shape == .rectTee {
+            fitting.teeRightWidth = 18; fitting.teeRightDepth = 12
+            fitting.teeThroatG = 6; fitting.teeThroatH = 6
+            fitting.teeThroatI = 6; fitting.teeThroatJ = 6
+            fitting.teeRightConnection = .slipDrive
+            fitting.outletWidth = 18; fitting.outletHeight = 12
+        }
+        if shape == .squareRound { fitting.length = 12; fitting.outletConnection = .raw; fitting.hasDamper = false }
+        if shape == .rectEndCap { fitting.outletWidth = fitting.inletWidth; fitting.outletHeight = fitting.inletHeight }
+        if shape == .rectTransition { fitting.centerTransition() }
         if shape.isRoundElbow {
             fitting.outletWidth = fitting.inletWidth; fitting.outletHeight = fitting.inletHeight
         }
