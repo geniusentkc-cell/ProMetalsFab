@@ -39,7 +39,7 @@ struct FabHomeView: View {
             .navigationTitle("ProMetalsFab")
             .toolbar { ToolbarItem(placement: .navigationBarTrailing) {
                 Button { jobName = ""; addingJob = true } label: {
-                    Label("Add Job", systemImage: "plus").labelStyle(.titleAndIcon)
+                    Text("＋ Add Job").fontWeight(.semibold).fixedSize(horizontal: true, vertical: false)
                 }
             }}
             .alert("New Job", isPresented: $addingJob) {
@@ -116,7 +116,7 @@ struct FabJobView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .navigationBarTrailing) {
             Button { creatingArea = true } label: {
-                Label("Add Area", systemImage: "folder.badge.plus").labelStyle(.titleAndIcon)
+                Text("＋ Add Area").fontWeight(.semibold).fixedSize(horizontal: true, vertical: false)
             }
         }}
         .sheet(isPresented: $creatingArea) {
@@ -283,7 +283,7 @@ struct FabAreaFittingsView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button { adding = true } label: {
-                    Label("Add Fitting", systemImage: "plus").labelStyle(.titleAndIcon)
+                    Text("＋ Add Fitting").fontWeight(.semibold).fixedSize(horizontal: true, vertical: false)
                 }
             }
             ToolbarItem(placement: .navigationBarLeading) { EditButton() }
@@ -655,7 +655,7 @@ Section("Dimensions — Finished Inches") {
 }
 if isTransition {
     Section("Transition Side Reductions — Linked") {
-        Text("Starts centered. Editing any side recalculates the opposite side automatically.")
+        Text("Starts centered. Top and Bottom show signed edge movement: + up, − down. Editing one recalculates the other.")
             .font(.caption).foregroundColor(.secondary)
         number("Left", Binding(get: { fitting.transitionLeft }, set: {
             fitting.setTransitionLeft($0); customizedTransition = true
@@ -663,10 +663,10 @@ if isTransition {
         number("Right", Binding(get: { fitting.transitionRight }, set: {
             fitting.setTransitionRight($0); customizedTransition = true
         }))
-        number("Top", Binding(get: { fitting.transitionTop }, set: {
+        number("Top (up + / down −)", Binding(get: { fitting.transitionTop }, set: {
             fitting.setTransitionTop($0); customizedTransition = true
         }))
-        number("Bottom", Binding(get: { fitting.transitionBottom }, set: {
+        number("Bottom (up + / down −)", Binding(get: { fitting.transitionBottom }, set: {
             fitting.setTransitionBottom($0); customizedTransition = true
         }))
         Button("Reset to Centerline") {
