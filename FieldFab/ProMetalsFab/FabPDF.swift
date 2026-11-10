@@ -143,6 +143,7 @@ enum FabPDFExporter {
                 } else if f.shape == .rectTransition {
                     details.append("LENGTH \(fabInches(f.length)) · STR IN/OUT \(fabInches(f.straightIn))/\(fabInches(f.straightOut))")
                     details.append("LEFT \(fabInches(f.transitionLeft)) · RIGHT \(fabInches(f.transitionRight))")
+                    details.append("VERTICAL EDGE SHIFT (+ UP / - DOWN)")
                     details.append("TOP \(fabInches(f.transitionTop)) · BOTTOM \(fabInches(f.transitionBottom))")
                 } else {
                     details.append("E LENGTH \(fabInches(f.length))")
