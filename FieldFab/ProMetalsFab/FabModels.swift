@@ -13,7 +13,12 @@ enum FabShape: String, Codable, CaseIterable, Identifiable {
     case rectTee = "Rectangular Square Tee"
     case rectEndCap = "Rectangular End Cap"
     case squareRound = "Square to Round"
+    // Legacy round shapes remain decodable for previous saved jobs.
     case roundStraight = "Round Straight"
+    case roundSpiral = "Round Spiral Pipe"
+    case roundHeto90 = "90° HETO"
+    case roundHeto45 = "45° HETO"
+    case roundEndCap = "Round End Cap"
     case roundReducer = "Round Concentric Reducer"
     case roundEccentric = "Round Eccentric Reducer"
     case roundElbow45 = "Round 45° Elbow"
@@ -26,7 +31,11 @@ enum FabShape: String, Codable, CaseIterable, Identifiable {
     // selectable round elbow with an angle picker.
     static var libraryChoices: [FabShape] {
         // The old rectangular offset remains decodable, but is not in the approved V3 catalog.
-        allCases.filter { $0 != .roundElbow45 && $0 != .rectOffset }
+        // V4 approved round catalog: six entries only. Older fitting types stay
+        // decodable and can still be edited in preexisting jobs.
+        let approvedRound: [FabShape] = [.roundElbow90, .roundReducer, .roundHeto90,
+                                        .roundHeto45, .roundSpiral, .roundEndCap]
+        return allCases.filter { $0.isCatalogRect } + approvedRound + [.custom]
     }
     var isCatalogRect: Bool {
         switch self {
@@ -35,9 +44,21 @@ enum FabShape: String, Codable, CaseIterable, Identifiable {
         default: return false
         }
     }
+    var isCatalogRound: Bool {
+        switch self {
+        case .roundElbow45, .roundElbow90, .roundReducer, .roundHeto90,
+             .roundHeto45, .roundSpiral, .roundEndCap: return true
+        default: return false
+        }
+    }
+    var isHeto: Bool { self == .roundHeto90 || self == .roundHeto45 }
+    var isRoundReducer: Bool { self == .roundReducer || self == .roundEccentric }
+    var isRoundEndCap: Bool { self == .roundEndCap }
+    var isRoundSpiral: Bool { self == .roundSpiral }
     var displayName: String {
         switch self {
         case .roundElbow45, .roundElbow90: return "Round Elbow"
+        case .roundReducer: return "Round Reducer"
         case .rectElbow45: return "45° Square Elbow"
         case .rectElbow90: return "90° Square Elbow with Vanes"
         case .rectRadiusElbow: return "Rectangular Radius Elbow"
@@ -53,14 +74,16 @@ enum FabShape: String, Codable, CaseIterable, Identifiable {
     var isCustom: Bool { self == .custom }
     var isRound: Bool {
         switch self {
-        case .roundStraight, .roundReducer, .roundEccentric, .roundElbow45,
-             .roundElbow90, .roundOffset, .roundTee: return true
+        case .roundStraight, .roundSpiral, .roundReducer, .roundEccentric, .roundElbow45,
+             .roundElbow90, .roundHeto90, .roundHeto45, .roundEndCap,
+             .roundOffset, .roundTee: return true
         default: return false
         }
     }
     var isTransition: Bool { self == .rectTransition || self == .rectOffset || self == .squareRound || self == .roundReducer || self == .roundEccentric || self == .roundOffset }
     var isElbow: Bool { isRectElbow || isRoundElbow }
-    var needsOutlet: Bool { isTransition || isRectElbow || self == .roundTee || self == .rectTee }
+    var needsOutlet: Bool { isTransition || isRectElbow || isHeto || self == .roundTee || self == .rectTee }
+    var singleOpening: Bool { self == .rectEndCap || self == .roundEndCap }
 }
 
 enum FabConnection: String, Codable, CaseIterable, Identifiable {
@@ -68,9 +91,11 @@ enum FabConnection: String, Codable, CaseIterable, Identifiable {
     // Older names are retained so V1 saved jobs remain decodable.
     case plain = "Plain", beaded = "Beaded", flanged = "Flanged"
     case raw = "Raw", bead = "Bead", custom = "Custom", flangeOut = "1\" Flange Out"
+    case roundTDC = "TDC Flange"
     var id: String { rawValue }
     static var rectangular: [FabConnection] { [.slipDrive, .driveSlip, .tdf, .raw, .flangeOut, .custom] }
-    static var round: [FabConnection] { [.raw, .bead, .custom] }
+    static var round: [FabConnection] { [.raw, .bead, .roundTDC, .custom] }
+    static var spiral: [FabConnection] { [.raw, .custom] }
     var normalizedRound: FabConnection {
         switch self {
         case .plain: return .raw
@@ -111,12 +136,56 @@ enum FabHorizontalAlignment: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum FabMaterial: String, Codable, CaseIterable, Identifiable {
+    case galvanized = "Galvanized"
+    case stainless = "Stainless Steel"
+    case paintGrip = "Paint Grip"
+    case aluminum = "Aluminum"
+    var id: String { rawValue }
+}
+
+enum FabGauge: String, Codable, CaseIterable, Identifiable {
+    case ga10 = "10", ga12 = "12", ga14 = "14", ga16 = "16", ga18 = "18"
+    case ga20 = "20", ga22 = "22", ga24 = "24", ga26 = "26", custom = "Custom"
+    var id: String { rawValue }
+}
+
+enum FabElbowFabrication: String, Codable, CaseIterable, Identifiable {
+    case fabricated = "Fabricated", purchased = "Purchased"
+    var id: String { rawValue }
+}
+
+enum FabRadiusFactor: String, Codable, CaseIterable, Identifiable {
+    case onePointFive = "1.5", one = "1.0"
+    var id: String { rawValue }
+    var displayName: String { self == .onePointFive ? "1.5 (standard)" : "1" }
+}
+
+enum FabReducerAlignment: String, Codable, CaseIterable, Identifiable {
+    case centerline = "Centerline", flatTop = "Flat Top"
+    var id: String { rawValue }
+}
+
+enum FabHetoLengthMode: String, Codable, CaseIterable, Identifiable {
+    case standard = "Standard", custom = "Custom"
+    var id: String { rawValue }
+}
+
 struct FabArea: Codable, Identifiable, Equatable {
     var id = UUID()
     var name: String
     var rectangularLiner: FabLiner = .none
     var roundInsulation: FabRoundInsulation = .none
     var roundThickness: FabThickness = .one
+    // Optional for backwards-compatible decoding of pre-V4 persisted areas.
+    var material: FabMaterial? = nil
+    var gauge: FabGauge? = nil
+    var customGauge: String? = nil
+    var defaultMaterial: FabMaterial { material ?? .galvanized }
+    var defaultGauge: FabGauge { gauge ?? .ga24 }
+    var defaultGaugeLabel: String {
+        defaultGauge == .custom ? (customGauge ?? "").trimmingCharacters(in: .whitespacesAndNewlines) : defaultGauge.rawValue + " GA"
+    }
 }
 
 struct FabFitting: Codable, Identifiable, Equatable {
@@ -158,11 +227,35 @@ struct FabFitting: Codable, Identifiable, Equatable {
     var teeRightConnection: FabConnection? = nil
     var teeRightSpecial: String? = nil
     var hasDamper: Bool? = nil
+    // All newly added values stay Optional to decode V1/V2/V3 JSON unmodified.
+    var materialOverride: FabMaterial? = nil
+    var gaugeOverride: FabGauge? = nil
+    var customGaugeOverride: String? = nil
+    var elbowFabrication: FabElbowFabrication? = nil
+    var elbowRadiusFactor: FabRadiusFactor? = nil
+    var elbowAngleCustom: Bool? = nil
+    var reducerAlignment: FabReducerAlignment? = nil
+    var hetoLengthMode: FabHetoLengthMode? = nil
     var notes: String = ""
 
     var isRound: Bool { shape.isRound }
+    func effectiveMaterial(in area: FabArea?) -> FabMaterial { materialOverride ?? area?.defaultMaterial ?? .galvanized }
+    func effectiveGauge(in area: FabArea?) -> FabGauge { gaugeOverride ?? area?.defaultGauge ?? .ga24 }
+    func effectiveGaugeLabel(in area: FabArea?) -> String {
+        let selection = effectiveGauge(in: area)
+        if selection == .custom {
+            return gaugeOverride == nil ? (area?.customGauge ?? "") : (customGaugeOverride ?? "")
+        }
+        return selection.rawValue + " GA"
+    }
+    var fabricationType: FabElbowFabrication { elbowFabrication ?? .fabricated }
+    var radiusFactor: FabRadiusFactor { elbowRadiusFactor ?? .onePointFive }
+    var angleIsCustom: Bool { elbowAngleCustom ?? false }
+    var reducerMode: FabReducerAlignment { reducerAlignment ?? .centerline }
+    var hetoMode: FabHetoLengthMode { hetoLengthMode ?? .standard }
+    var needsCustomLength: Bool { shape.isHeto && hetoMode == .custom }
     var effectiveOutletHeight: Double {
-        (shape.isRound || shape == .squareRound) ? outletWidth : outletHeight
+        (shape.isRound && !shape.isHeto || shape == .squareRound || shape.isHeto) ? outletWidth : outletHeight
     }
     func effectiveLiner(in area: FabArea?) -> FabLiner { linerOverride ?? area?.rectangularLiner ?? .none }
     func effectiveRoundInsulation(in area: FabArea?) -> FabRoundInsulation { roundInsulationOverride ?? area?.roundInsulation ?? .none }
@@ -170,7 +263,7 @@ struct FabFitting: Codable, Identifiable, Equatable {
     var effectiveOutletWidth: Double { shape.isRoundElbow || shape.isStraight ? inletWidth : outletWidth }
     var effectiveOutletDepth: Double { shape.isRoundElbow || shape.isStraight ? inletHeight : outletHeight }
     private func connectionLabel(_ connection: FabConnection, description: String) -> String {
-        let selected = isRound ? connection.normalizedRound : connection
+        let selected = (isRound && !shape.isHeto) ? connection.normalizedRound : connection
         if selected == .special || selected == .custom {
             return "Custom: " + (description.isEmpty ? "Unspecified" : description)
         }
@@ -179,6 +272,9 @@ struct FabFitting: Codable, Identifiable, Equatable {
     func inletLabel() -> String { connectionLabel(inletConnection, description: inletSpecial) }
     func outletLabel() -> String {
         let chosen = (isRound || shape == .squareRound) ? outletConnection.normalizedRound : outletConnection
+        if shape.isHeto {
+            return chosen == .custom ? "Custom: " + (outletSpecial.isEmpty ? "Unspecified" : outletSpecial) : chosen.rawValue
+        }
         return connectionLabel(chosen, description: outletSpecial)
     }
     func teeRightLabel() -> String { connectionLabel(teeRightConnection ?? .slipDrive, description: teeRightSpecial ?? "") }
@@ -213,7 +309,11 @@ struct FabFitting: Codable, Identifiable, Equatable {
     }
     var dimensionLegend: String {
         if shape.isCustom { return "Describe custom fitting in Notes" }
-        if shape.isRoundElbow { return "A Diameter In = C Diameter Out · J Angle" }
+        if shape.isRoundElbow { return "A Diameter (both ends) · B Elbow Angle" }
+        if shape.isRoundReducer { return "A Diameter In · B Diameter Out · C Length" }
+        if shape.isHeto { return "A × B Rectangular Opening · C Round Diameter · D Length" }
+        if shape.isRoundSpiral { return "A Pipe Length · B Diameter (both ends)" }
+        if shape.isRoundEndCap { return "A Diameter · one open connection" }
         if shape.isRound { return "A Diameter In · C Diameter Out · E Length" }
         if shape.isSquareElbow { return "A/B = In · C/D = Out · E/F = separate throat lengths" }
         if shape == .rectRadiusElbow { return "A/B = In · C/D = Out · E = interior radius · F = top shift" }
@@ -227,6 +327,9 @@ struct FabFitting: Codable, Identifiable, Equatable {
     // Center displacement of the outlet, relative to inlet, in finished inches.
     // Positive Y is up; a Top Down value of 2 lowers the outlet's top by 2.
     var offsetY: Double {
+        if shape.isRoundReducer && reducerMode == .flatTop {
+            return (inletWidth - outletWidth) / 2
+        }
         let input = shape.isRound ? inletWidth : inletHeight
         let output = shape.needsOutlet ? effectiveOutletHeight : input
         switch verticalAlignment {
@@ -253,6 +356,10 @@ struct FabFitting: Codable, Identifiable, Equatable {
     var rightChange: Double { (inletWidth - (shape.needsOutlet ? outletWidth : inletWidth)) / 2 - offsetX }
     var validationMessage: String? {
         guard quantity > 0 else { return "Quantity must be at least 1." }
+        if gaugeOverride == .custom &&
+           (customGaugeOverride ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Enter the custom gauge or thickness for this fitting."
+        }
         if shape.isCustom {
             return notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "Describe the custom fitting in Shop Notes." : nil
@@ -265,9 +372,12 @@ struct FabFitting: Codable, Identifiable, Equatable {
         guard inletWidth > 0, (!shape.isRound && inletHeight > 0 || shape.isRound) else {
             return "Inlet dimensions must be greater than zero."
         }
-        if shape != .rectEndCap && shape != .rectTee && !shape.isElbow && length <= 0 {
+        if !shape.singleOpening && !shape.isHeto && shape != .rectTee && !shape.isElbow && length <= 0 {
             return "Length must be greater than zero."
         }
+        if shape.isHeto && needsCustomLength && length <= 0 { return "Custom HETO length must be greater than zero." }
+        if shape.isHeto && inletHeight <= 0 { return "HETO depth must be greater than zero." }
+        if shape.isRoundElbow && (angle <= 0 || angle > 180) { return "Enter an elbow angle greater than 0° and at most 180°." }
         if shape == .rectRadiusElbow && radius <= 0 { return "Inside radius must be greater than zero." }
         if shape == .rectTee {
             guard teeE > 0, teeF > 0 else { return "The right opening must have positive dimensions." }
@@ -281,19 +391,19 @@ struct FabFitting: Codable, Identifiable, Equatable {
         if shape.isSquareElbow && (straightIn < 0 || straightOut < 0) {
             return "Throat straight lengths cannot be negative."
         }
-        if !shape.isElbow && !shape.isStraight && shape != .rectTee && shape != .rectEndCap && (straightIn < 0 || straightOut < 0 || straightIn + straightOut > length) {
+        if !shape.isElbow && !shape.isStraight && !shape.isCatalogRound && shape != .rectTee && shape != .rectEndCap && (straightIn < 0 || straightOut < 0 || straightIn + straightOut > length) {
             return "Straight-in plus straight-out must not exceed overall length."
         }
         if shape == .roundTee && branchDiameter <= 0 { return "Branch diameter must be greater than zero." }
         if shape.isRound && (inletConnection.normalizedRound == .custom && inletSpecial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                             outletConnection.normalizedRound == .custom && outletSpecial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                             (!shape.singleOpening && outletConnection.normalizedRound == .custom && outletSpecial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)) {
             return "Enter the description for each Custom round connection."
         }
         func isBlank(_ v: String) -> Bool { v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         if inletConnection == .custom || inletConnection == .special {
             if isBlank(inletSpecial) { return "Describe the custom inlet connection." }
         }
-        if shape != .rectEndCap && (outletConnection == .custom || outletConnection == .special) {
+        if !shape.singleOpening && (outletConnection == .custom || outletConnection == .special) {
             if isBlank(outletSpecial) { return "Describe the custom outlet connection." }
         }
         if shape == .rectTee && (teeRightConnection ?? .slipDrive) == .custom && isBlank(teeRightSpecial ?? "") {
@@ -328,8 +438,25 @@ struct FabFitting: Codable, Identifiable, Equatable {
         if shape == .squareRound { fitting.length = 12; fitting.outletConnection = .raw; fitting.hasDamper = false }
         if shape == .rectEndCap { fitting.outletWidth = fitting.inletWidth; fitting.outletHeight = fitting.inletHeight }
         if shape == .rectTransition { fitting.centerTransition() }
+        if shape.isHeto {
+            fitting.inletWidth = 12; fitting.inletHeight = 8
+            fitting.outletWidth = 8; fitting.outletHeight = 8
+            fitting.length = 12; fitting.hetoLengthMode = .standard
+            fitting.inletConnection = .flangeOut; fitting.outletConnection = .bead
+            fitting.hasDamper = false
+        }
+        if shape == .roundSpiral {
+            fitting.inletWidth = 12; fitting.inletHeight = 12
+            fitting.outletWidth = 12; fitting.outletHeight = 12
+            fitting.length = 60
+        }
+        if shape.isRoundEndCap { fitting.inletWidth = 12; fitting.inletConnection = .raw }
+        if shape.isRoundReducer { fitting.reducerAlignment = .centerline }
         if shape.isRoundElbow {
             fitting.outletWidth = fitting.inletWidth; fitting.outletHeight = fitting.inletHeight
+            fitting.elbowRadiusFactor = .onePointFive
+            fitting.elbowFabrication = .fabricated
+            fitting.elbowAngleCustom = false
         }
         if shape == .roundEccentric { fitting.verticalAlignment = .topDown }
         if shape == .squareRound { fitting.outletWidth = 12 }

@@ -65,8 +65,7 @@ struct FabHomeView: View {
 struct FabJobView: View {
     @EnvironmentObject private var store: FabStore
     let jobID: UUID
-    @State private var addingArea = false
-    @State private var newAreaName = ""
+    @State private var creatingArea = false
     @State private var editingArea: FabArea?
     @State private var shareFile: FabExportFile?
     @State private var exportError: String?
@@ -117,19 +116,15 @@ struct FabJobView: View {
         .navigationTitle(job?.name ?? "Job")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .navigationBarTrailing) {
-            Button { newAreaName = ""; addingArea = true } label: { Label("Add Area", systemImage: "folder.badge.plus") }
+            Button { creatingArea = true } label: { Label("Add Area", systemImage: "folder.badge.plus") }
         }}
-        .alert("New Area", isPresented: $addingArea) {
-            TextField("Floor or area name", text: $newAreaName)
-            Button("Create") {
-                let name = newAreaName.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !name.isEmpty, var changed = job {
-                    changed.areas.append(FabArea(name: name))
-                    store.replace(changed)
-                }
+        .sheet(isPresented: $creatingArea) {
+            FabAreaEditor(area: FabArea(name: "")) { saved in
+                guard var changed = job else { return }
+                changed.areas.append(saved)
+                store.replace(changed)
             }
-            Button("Cancel", role: .cancel) {}
-        } message: { Text("Example: Second Floor") }
+        }
         .sheet(item: $editingArea) { area in
             FabAreaEditor(area: area) { saved in
                 guard var changed = job, let i = changed.areas.firstIndex(where: { $0.id == saved.id }) else { return }
@@ -151,6 +146,7 @@ struct FabJobView: View {
 struct FabAreaEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var area: FabArea
+    @State private var showAreaValidation = false
     let onSave: (FabArea) -> Void
     init(area: FabArea, onSave: @escaping (FabArea) -> Void) {
         _area = State(initialValue: area); self.onSave = onSave
@@ -159,6 +155,26 @@ struct FabAreaEditor: View {
         NavigationStack {
             Form {
                 Section("Area") { TextField("Area name", text: $area.name) }
+                Section("Default Material & Gauge — All Fittings") {
+                    Picker("Material", selection: Binding(
+                        get: { area.defaultMaterial }, set: { area.material = $0 }
+                    )) {
+                        ForEach(FabMaterial.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    Picker("Gauge", selection: Binding(
+                        get: { area.defaultGauge }, set: { area.gauge = $0 }
+                    )) {
+                        ForEach(FabGauge.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    if area.defaultGauge == .custom {
+                        TextField("Custom gauge or thickness", text: Binding(
+                            get: { area.customGauge ?? "" },
+                            set: { area.customGauge = $0 }
+                        ))
+                    }
+                    Text("New fittings inherit these values. Existing fittings with no overrides also follow changes to area defaults.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
                 Section("Rectangular fittings — liner") {
                     Picker("Default liner", selection: $area.rectangularLiner) {
                         ForEach(FabLiner.allCases) { Text($0.rawValue).tag($0) }
@@ -179,12 +195,22 @@ struct FabAreaEditor: View {
                         .foregroundColor(.secondary).font(.footnote)
                 }
             }
-            .navigationTitle("Area Settings").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(area.name.isEmpty ? "New Area" : "Area Settings")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Save") {
-                    if !area.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { onSave(area); dismiss() }
+                    let validName = !area.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    let validGauge = area.defaultGauge != .custom ||
+                        !(area.customGauge ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    if validName && validGauge { onSave(area); dismiss() }
+                    else { showAreaValidation = true }
                 }}
+            }
+            .alert("Check Area Defaults", isPresented: $showAreaValidation) {
+                Button("OK") {}
+            } message: {
+                Text("Enter an area name and, when Custom is selected, a custom gauge or thickness.")
             }
         }
     }
@@ -350,11 +376,12 @@ struct FabFittingEditor: View {
     let dismissAfterSave: Bool
     @State private var showError = false
     @State private var customizedTransition = false
+    @FocusState private var dimensionFocused: Bool
 
     init(fitting: FabFitting, area: FabArea?, dismissAfterSave: Bool = true,
          onSave: @escaping (FabFitting) -> Void) {
         var editable = fitting
-        if editable.isRound {
+        if editable.isRound && !editable.shape.isHeto {
             // Normalize V1 labels without breaking existing saved connections.
             if editable.inletConnection == .flanged && editable.inletSpecial.isEmpty {
                 editable.inletSpecial = "Flanged"
@@ -392,12 +419,42 @@ struct FabFittingEditor: View {
     private var isRound: Bool { fitting.isRound }
     private var isRoundElbow: Bool { fitting.shape.isRoundElbow }
     private var isRectElbow: Bool { fitting.shape.isRectElbow }
-    private var inConnections: [FabConnection] { isRound ? FabConnection.round : FabConnection.rectangular }
-    private var outConnections: [FabConnection] { (isRound || fitting.shape == .squareRound) ? FabConnection.round : FabConnection.rectangular }
+    private var inConnections: [FabConnection] {
+        if fitting.shape.isHeto { return FabConnection.rectangular }
+        if fitting.shape.isRoundSpiral { return FabConnection.spiral }
+        return isRound ? FabConnection.round : FabConnection.rectangular
+    }
+    private var outConnections: [FabConnection] {
+        if fitting.shape.isRoundSpiral { return FabConnection.spiral }
+        return (isRound || fitting.shape == .squareRound) ? FabConnection.round : FabConnection.rectangular
+    }
     private var isSquareElbow: Bool { fitting.shape.isSquareElbow }
     private var isTransition: Bool { fitting.shape == .rectTransition }
     private var isTee: Bool { fitting.shape == .rectTee }
-    private var isEndCap: Bool { fitting.shape == .rectEndCap }
+    private var isEndCap: Bool { fitting.shape.singleOpening }
+    private var materialSelection: Binding<FabMaterial> {
+        Binding(get: { fitting.effectiveMaterial(in: area) }, set: { fitting.materialOverride = $0 })
+    }
+    private var gaugeSelection: Binding<FabGauge> {
+        Binding(get: { fitting.effectiveGauge(in: area) }, set: { fitting.gaugeOverride = $0 })
+    }
+    private var customGaugeText: Binding<String> {
+        Binding(get: {
+            fitting.gaugeOverride == nil ? (area?.customGauge ?? "") : (fitting.customGaugeOverride ?? "")
+        }, set: { fitting.customGaugeOverride = $0 })
+    }
+    private var elbowFabricationSelection: Binding<FabElbowFabrication> {
+        Binding(get: { fitting.fabricationType }, set: { fitting.elbowFabrication = $0 })
+    }
+    private var radiusFactorSelection: Binding<FabRadiusFactor> {
+        Binding(get: { fitting.radiusFactor }, set: { fitting.elbowRadiusFactor = $0 })
+    }
+    private var reducerAlignmentSelection: Binding<FabReducerAlignment> {
+        Binding(get: { fitting.reducerMode }, set: { fitting.reducerAlignment = $0 })
+    }
+    private var hetoLengthSelection: Binding<FabHetoLengthMode> {
+        Binding(get: { fitting.hetoMode }, set: { fitting.hetoLengthMode = $0 })
+    }
     private var teeE: Binding<Double> { Binding(get: { fitting.teeE }, set: { fitting.teeRightWidth = $0 }) }
     private var teeF: Binding<Double> { Binding(get: { fitting.teeF }, set: { fitting.teeRightDepth = $0 }) }
     private var teeG: Binding<Double> { Binding(get: { fitting.teeG }, set: { fitting.teeThroatG = $0 }) }
@@ -417,7 +474,7 @@ struct FabFittingEditor: View {
         Binding(get: { fitting.inletWidth }, set: { newValue in
             fitting.inletWidth = newValue
             fitting.inletHeight = newValue
-            if fitting.shape.isRoundElbow || fitting.shape == .roundStraight {
+            if fitting.shape.isRoundElbow || fitting.shape == .roundStraight || fitting.shape.isRoundSpiral {
                 fitting.outletWidth = newValue
                 fitting.outletHeight = newValue
             }
@@ -435,6 +492,20 @@ struct FabFittingEditor: View {
             if fitting.shape == .rectStraight { fitting.outletHeight = newValue }
         })
     }
+    private var elbowAngleMode: Binding<String> {
+        Binding(get: {
+            fitting.angleIsCustom ? "Custom" : (fitting.shape == .roundElbow45 ? "45°" : "90°")
+        }, set: { selected in
+            if selected == "Custom" {
+                fitting.elbowAngleCustom = true
+                if fitting.angle <= 0 { fitting.angle = 90 }
+            } else {
+                fitting.elbowAngleCustom = false
+                fitting.shape = selected == "45°" ? .roundElbow45 : .roundElbow90
+                fitting.angle = selected == "45°" ? 45 : 90
+            }
+        })
+    }
     private var elbowAngle: Binding<Int> {
         Binding(get: { fitting.shape == .roundElbow45 ? 45 : 90 }, set: { selected in
             fitting.shape = selected == 45 ? .roundElbow45 : .roundElbow90
@@ -444,22 +515,23 @@ struct FabFittingEditor: View {
         })
     }
     private var inputConnection: Binding<FabConnection> {
-        Binding(get: { isRound ? fitting.inletConnection.normalizedRound : fitting.inletConnection },
+        Binding(get: { (isRound && !fitting.shape.isHeto) ? fitting.inletConnection.normalizedRound : fitting.inletConnection },
                 set: { fitting.inletConnection = $0 })
     }
     private var outputConnection: Binding<FabConnection> {
         Binding(get: { (isRound || fitting.shape == .squareRound) ? fitting.outletConnection.normalizedRound : fitting.outletConnection },
                 set: { fitting.outletConnection = $0 })
     }
-    private func number(_ title: String, _ value: Binding<Double>) -> some View {
+    private func number(_ title: String, _ value: Binding<Double>, unit: String = "in") -> some View {
         HStack {
             Text(title)
             Spacer(minLength: 8)
-            TextField("Inches", value: value, format: .number)
+            TextField(unit == "°" ? "Degrees" : "Inches", value: value, format: .number)
                 .keyboardType(.decimalPad)
+                .focused($dimensionFocused)
                 .multilineTextAlignment(.trailing)
                 .frame(width: 88)
-            Text("in").foregroundColor(.secondary)
+            Text(unit).foregroundColor(.secondary)
         }
     }
     private func matched(_ title: String, value: Double) -> some View {
@@ -474,18 +546,57 @@ struct FabFittingEditor: View {
     private var measurementsAndAlignment: some View {
 Section("Dimensions — Finished Inches") {
     if isRound {
-        number("A — Diameter In", diameterInput)
-        if isRoundElbow || fitting.shape == .roundStraight {
-            matched("C — Diameter Out", value: fitting.inletWidth)
-        } else {
-            number("C — Diameter Out", $fitting.outletWidth)
-        }
         if isRoundElbow {
-            Picker("J — Elbow Angle", selection: elbowAngle) {
-                Text("90°").tag(90)
-                Text("45°").tag(45)
-            }.pickerStyle(.segmented)
+            number("A — Diameter (both ends)", diameterInput)
+            Picker("B — Elbow Angle", selection: elbowAngleMode) {
+                Text("90°").tag("90°")
+                Text("45°").tag("45°")
+                Text("Custom").tag("Custom")
+            }
+            if fitting.angleIsCustom { number("B — Custom Angle", $fitting.angle, unit: "°") }
+            Picker("Fabrication", selection: elbowFabricationSelection) {
+                ForEach(FabElbowFabrication.allCases) { Text($0.rawValue).tag($0) }
+            }
+            Picker("Radius Factor", selection: radiusFactorSelection) {
+                ForEach(FabRadiusFactor.allCases) { Text($0.displayName).tag($0) }
+            }
+        } else if fitting.shape.isRoundReducer {
+            number("A — Diameter In", diameterInput)
+            number("B — Diameter Out", $fitting.outletWidth)
+            number("C — Length", $fitting.length)
+            Picker("Offset", selection: reducerAlignmentSelection) {
+                ForEach(FabReducerAlignment.allCases) { Text($0.rawValue).tag($0) }
+            }
+            if fitting.reducerMode == .flatTop {
+                Text("Flat Top: top edges stay aligned. Centerline shift is half the diameter difference.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+        } else if fitting.shape.isHeto {
+            number("A — Rectangular Width", $fitting.inletWidth)
+            number("B — Rectangular Depth", $fitting.inletHeight)
+            number("C — Round Diameter", $fitting.outletWidth)
+            Picker("D — Length", selection: hetoLengthSelection) {
+                ForEach(FabHetoLengthMode.allCases) { Text($0.rawValue).tag($0) }
+            }
+            if fitting.needsCustomLength {
+                number("D — Custom Length", $fitting.length)
+            } else {
+                Text("D — STANDARD (determined by opening sizes)")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+        } else if fitting.shape.isRoundSpiral {
+            number("A — Pipe Length", $fitting.length)
+            number("B — Diameter (both ends)", diameterInput)
+        } else if fitting.shape.isRoundEndCap {
+            number("A — Diameter", diameterInput)
         } else {
+            // Legacy round parts remain editable in pre-V4 saved jobs.
+            number("A — Diameter In", diameterInput)
+            if fitting.shape == .roundStraight {
+                matched("C — Diameter Out", value: fitting.inletWidth)
+            } else {
+                number("C — Diameter Out", $fitting.outletWidth)
+            }
             number("E — Overall Length", $fitting.length)
             if !fitting.shape.isStraight {
                 number("K — Straight In", $fitting.straightIn)
@@ -493,7 +604,7 @@ Section("Dimensions — Finished Inches") {
             }
             if fitting.shape == .roundTee {
                 number("M — Branch Diameter", $fitting.branchDiameter)
-                number("J — Lateral Angle", $fitting.angle)
+                number("J — Lateral Angle", $fitting.angle, unit: "°")
             }
         }
     } else {
@@ -561,7 +672,7 @@ if isTransition {
         Text(customizedTransition ? "Custom alignment" : "Centered alignment")
             .font(.caption).foregroundColor(.secondary)
     }
-} else if fitting.shape.isTransition && fitting.shape != .squareRound {
+} else if fitting.shape.isTransition && fitting.shape != .squareRound && !fitting.shape.isCatalogRound {
     // Retain legacy offset controls for previously saved V2 offsets.
     Section("Legacy Alignment and Offsets") {
         Picker("Vertical", selection: $fitting.verticalAlignment) {
@@ -578,20 +689,25 @@ if isTransition {
     @ViewBuilder
     private var connectorSection: some View {
 Section("Connections") {
-    let inletLabel = isTee ? "Bottom (A × B)" : (fitting.shape == .squareRound ? "Rectangular (A × B)" : "Connection In")
+    let inletLabel = isTee ? "Bottom (A × B)" :
+        ((fitting.shape == .squareRound || fitting.shape.isHeto) ? "Rectangular (A × B)" :
+         (isEndCap ? "Open End Connection" : "Connection In"))
     Picker(inletLabel, selection: inputConnection) {
         ForEach(inConnections) { Text($0.rawValue).tag($0) }
     }
     if inputConnection.wrappedValue == .custom || inputConnection.wrappedValue == .special {
         TextField("Custom inlet connection", text: $fitting.inletSpecial)
+            .focused($dimensionFocused)
     }
     if !isEndCap {
-        let outletLabel = isTee ? "Left (C × D)" : (fitting.shape == .squareRound ? "Round (C)" : "Connection Out")
+        let outletLabel = isTee ? "Left (C × D)" :
+            ((fitting.shape == .squareRound || fitting.shape.isHeto) ? "Round (C)" : "Connection Out")
         Picker(outletLabel, selection: outputConnection) {
             ForEach(outConnections) { Text($0.rawValue).tag($0) }
         }
         if outputConnection.wrappedValue == .custom || outputConnection.wrappedValue == .special {
             TextField("Custom outlet connection", text: $fitting.outletSpecial)
+                .focused($dimensionFocused)
         }
     }
     if isTee {
@@ -600,23 +716,64 @@ Section("Connections") {
         }
         if teeRightConnection.wrappedValue == .custom || teeRightConnection.wrappedValue == .special {
             TextField("Custom right connection", text: teeRightSpecial)
+                .focused($dimensionFocused)
         }
     }
-    if fitting.shape == .squareRound {
+    if fitting.shape == .squareRound || fitting.shape.isHeto {
         Toggle("Include damper", isOn: damper)
     }
 }
+    }
+    @ViewBuilder
+    private var materialAndGauge: some View {
+        Section("Material & Gauge") {
+            Toggle("Override area material", isOn: Binding(
+                get: { fitting.materialOverride != nil },
+                set: { useOverride in
+                    fitting.materialOverride = useOverride ? fitting.effectiveMaterial(in: area) : nil
+                }
+            ))
+            Picker("Material", selection: materialSelection) {
+                ForEach(FabMaterial.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .disabled(fitting.materialOverride == nil && area != nil)
+            Toggle("Override area gauge", isOn: Binding(
+                get: { fitting.gaugeOverride != nil },
+                set: { useOverride in
+                    if useOverride {
+                        let current = fitting.effectiveGauge(in: area)
+                        fitting.gaugeOverride = current
+                        if current == .custom { fitting.customGaugeOverride = area?.customGauge }
+                    } else {
+                        fitting.gaugeOverride = nil
+                        fitting.customGaugeOverride = nil
+                    }
+                }
+            ))
+            Picker("Gauge", selection: gaugeSelection) {
+                ForEach(FabGauge.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .disabled(fitting.gaugeOverride == nil && area != nil)
+            if fitting.effectiveGauge(in: area) == .custom {
+                TextField("Custom gauge or thickness", text: customGaugeText)
+                    .focused($dimensionFocused)
+                    .disabled(fitting.gaugeOverride == nil && area != nil)
+            }
+            Text("Effective: \(fitting.effectiveMaterial(in: area).rawValue) · \(fitting.effectiveGaugeLabel(in: area))")
+                .font(.caption).foregroundColor(.secondary)
+        }
     }
     var body: some View {
         Form {
             Section("Fitting") {
                 Text(fitting.shape.displayName).font(.headline)
                 TextField("Fitting label (optional)", text: $fitting.name)
+                    .focused($dimensionFocused)
                 Stepper("Quantity: \(fitting.quantity)", value: $fitting.quantity, in: 1...9999)
             }
             if !fitting.shape.isCustom {
                 Section("Fitting Diagram · Dimension Letters") {
-                    if fitting.shape.isCatalogRect {
+                    if fitting.shape.isCatalogRect || fitting.shape.isCatalogRound {
                         FabDiagramView(fitting: fitting, compact: false)
                             .frame(maxWidth: .infinity)
                     } else {
@@ -673,8 +830,11 @@ Section("Connections") {
                     }
                 }
             }
+            materialAndGauge
             Section(fitting.shape.isCustom ? "Describe Custom Fitting (Required)" : "Shop Notes") {
-                TextEditor(text: $fitting.notes).frame(minHeight: 78)
+                TextEditor(text: $fitting.notes)
+                    .focused($dimensionFocused)
+                    .frame(minHeight: 78)
             }
             Section {
                 Text("Dimensions are finished inches; liner and insulation never automatically change the entered measurements. Drawings are labeled schematics, not flat patterns.")
@@ -683,7 +843,15 @@ Section("Connections") {
         }
         .navigationTitle("Fitting Details")
         .navigationBarTitleDisplayMode(.inline)
+        .scrollDismissesKeyboard(.interactively)
         .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button { dimensionFocused = false } label: {
+                    Label("Hide Keyboard", systemImage: "chevron.down")
+                }
+                Button("Done") { dimensionFocused = false }
+            }
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { dismiss() }
             }
@@ -735,7 +903,7 @@ struct FabFittingGlyph: View {
     let shape: FabShape
     var body: some View {
         Group {
-            if shape.isCatalogRect {
+            if shape.isCatalogRect || shape.isCatalogRound {
                 FabDiagramView(fitting: .new(shape: shape, areaID: nil), compact: true)
             } else {
                 FabLegacyGlyph(shape: shape)
@@ -761,13 +929,13 @@ struct FabLegacyGlyph: View {
                              at: point(x, y))
             }
             switch shape {
-            case .rectStraight, .roundStraight:
+            case .rectStraight, .roundStraight, .roundSpiral:
                 outline.addRect(CGRect(x: w*0.20, y: h*0.32, width: w*0.60, height: h*0.36))
                 if shape.isRound {
                     outline.addEllipse(in: CGRect(x: w*0.18, y: h*0.32, width: w*0.10, height: h*0.36))
                     outline.addEllipse(in: CGRect(x: w*0.74, y: h*0.32, width: w*0.10, height: h*0.36))
                 }
-            case .rectTransition, .squareRound, .roundReducer, .roundEccentric:
+            case .rectTransition, .squareRound, .roundReducer, .roundEccentric, .roundHeto90, .roundHeto45:
                 line((17,27),(32,27)); line((32,27),(67,37)); line((67,37),(82,37))
                 line((17,73),(32,73)); line((32,73),(67,63)); line((67,63),(82,63))
                 line((17,27),(17,73)); line((82,37),(82,63))
@@ -803,7 +971,7 @@ struct FabLegacyGlyph: View {
                 line((12,40),(88,40)); line((12,64),(88,64))
                 line((12,40),(12,64)); line((88,40),(88,64))
                 line((43,40),(43,14)); line((63,40),(63,14)); line((43,14),(63,14))
-            case .rectRadiusElbow, .rectTee, .rectEndCap:
+            case .rectRadiusElbow, .rectTee, .rectEndCap, .roundEndCap:
                 outline.addRect(CGRect(x: w*0.20, y: h*0.20, width: w*0.60, height: h*0.60))
             case .custom:
                 outline.addRect(CGRect(x:w*0.20,y:h*0.20,width:w*0.60,height:h*0.60))
