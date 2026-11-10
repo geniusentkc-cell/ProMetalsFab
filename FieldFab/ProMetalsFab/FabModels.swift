@@ -287,7 +287,10 @@ struct FabFitting: Codable, Identifiable, Equatable {
     var teeJ: Double { teeThroatJ ?? 6 }
     var transitionLeft: Double { leftChange }
     var transitionRight: Double { rightChange }
-    var transitionTop: Double { topChange }
+    // Signed vertical EDGE movement: positive = UP, negative = DOWN.
+    // The former topChange/bottomChange values represent reductions, which
+    // misleadingly gave two negative values for a centered expansion.
+    var transitionTop: Double { -topChange }
     var transitionBottom: Double { bottomChange }
     mutating func setTransitionLeft(_ left: Double) {
         horizontalAlignment = .centerShift
@@ -298,10 +301,13 @@ struct FabFitting: Codable, Identifiable, Equatable {
     }
     mutating func setTransitionTop(_ top: Double) {
         verticalAlignment = .centerShift
-        verticalValue = (inletHeight - outletHeight)/2 - top
+        // Top edge moves upward when its signed value is positive.
+        verticalValue = (inletHeight - outletHeight)/2 + top
     }
     mutating func setTransitionBottom(_ bottom: Double) {
-        setTransitionTop(inletHeight - outletHeight - bottom)
+        verticalAlignment = .centerShift
+        // Bottom edge also uses positive = UP, negative = DOWN.
+        verticalValue = bottom - (inletHeight - outletHeight)/2
     }
     mutating func centerTransition() {
         verticalAlignment = .centered; verticalValue = 0
