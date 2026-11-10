@@ -35,17 +35,12 @@ struct FabHomeView: View {
                         ids.forEach { store.removeJob($0) }
                     }
                 } header: { Text("Jobs") }
-                Section {
-                    Label("V1 stores jobs on this iPhone. Export PDFs to share with the shop.", systemImage: "iphone")
-                        .font(.footnote).foregroundColor(.secondary)
-                    NavigationLink("Legacy transition tool") {
-                        DuctTransition.ModuleView()
-                    }
-                } header: { Text("Tools") }
             }
             .navigationTitle("ProMetalsFab")
             .toolbar { ToolbarItem(placement: .navigationBarTrailing) {
-                Button { jobName = ""; addingJob = true } label: { Image(systemName: "plus") }
+                Button { jobName = ""; addingJob = true } label: {
+                    Label("Add Job", systemImage: "plus").labelStyle(.titleAndIcon)
+                }
             }}
             .alert("New Job", isPresented: $addingJob) {
                 TextField("Job name", text: $jobName)
@@ -74,10 +69,14 @@ struct FabJobView: View {
         List {
             if let job = job {
                 Section("Fabrication Requests") {
-                    NavigationLink {
-                        FabAreaFittingsView(jobID: jobID, areaID: nil)
-                    } label: {
-                        Label("Unassigned / Job Root (\(job.fittings(in: nil).count))", systemImage: "tray")
+                    // Hide the old job-root row unless existing fittings need a safe place to access them.
+                    // Deleting an area moves its fittings here; never silently hide saved data.
+                    if !job.fittings(in: nil).isEmpty {
+                        NavigationLink {
+                            FabAreaFittingsView(jobID: jobID, areaID: nil)
+                        } label: {
+                            Label("Fittings to Assign (\(job.fittings(in: nil).count))", systemImage: "tray.full")
+                        }
                     }
                     ForEach(job.areas) { area in
                         HStack {
@@ -116,7 +115,9 @@ struct FabJobView: View {
         .navigationTitle(job?.name ?? "Job")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .navigationBarTrailing) {
-            Button { creatingArea = true } label: { Label("Add Area", systemImage: "folder.badge.plus") }
+            Button { creatingArea = true } label: {
+                Label("Add Area", systemImage: "folder.badge.plus").labelStyle(.titleAndIcon)
+            }
         }}
         .sheet(isPresented: $creatingArea) {
             FabAreaEditor(area: FabArea(name: "")) { saved in
@@ -231,14 +232,14 @@ struct FabAreaFittingsView: View {
         List {
             Section {
                 if list.isEmpty {
-                    Text("No fittings yet. Tap + to create your first fitting.")
+                    Text("No fittings yet. Tap Add Fitting to create your first fitting.")
                         .foregroundColor(.secondary)
                 }
                 ForEach(list) { fitting in
                     Button { editing = fitting } label: {
                         HStack(spacing: 12) {
-                            Image(systemName: fitting.isRound ? "circle.dotted.circle" : "square.on.square")
-                                .font(.title3).foregroundColor(.blue).frame(width: 28)
+                            FabFittingListIcon(fitting: fitting)
+                                .frame(width: 52, height: 48)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(fitting.name.isEmpty ? fitting.shape.displayName : fitting.name)
                                     .font(.headline).foregroundColor(.primary)
@@ -273,15 +274,17 @@ struct FabAreaFittingsView: View {
             if let job = job, !list.isEmpty {
                 Section {
                     Button { export(job) } label: {
-                        Label("Export \(area?.name ?? "Job Root") PDF", systemImage: "square.and.arrow.up")
+                        Label("Export \(area?.name ?? "Fittings to Assign") PDF", systemImage: "square.and.arrow.up")
                     }
                 }
             }
         }
-        .navigationTitle(area?.name ?? "Job Root")
+        .navigationTitle(area?.name ?? "Fittings to Assign")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button { adding = true } label: { Image(systemName: "plus") }
+                Button { adding = true } label: {
+                    Label("Add Fitting", systemImage: "plus").labelStyle(.titleAndIcon)
+                }
             }
             ToolbarItem(placement: .navigationBarLeading) { EditButton() }
         }
@@ -896,6 +899,35 @@ struct FabDiagramView: View {
                 .background(Color.white)
             }
         }
+    }
+}
+
+// Compact, recognizable thumbnail for each saved fitting in an area list.
+// The same CAD artwork used in the fitting selector and fabrication PDF is reused here.
+// Use the actual fitting to respect reducer alignment and other image-specific options.
+struct FabFittingListIcon: View {
+    let fitting: FabFitting
+
+    private var drawing: UIImage? {
+        guard fitting.shape.isCatalogRect || fitting.shape.isCatalogRound else { return nil }
+        return FabDiagramArt.images(for: fitting).first
+    }
+
+    var body: some View {
+        Group {
+            if let drawing = drawing {
+                Image(uiImage: drawing)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(3)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
+            } else {
+                FabLegacyGlyph(shape: fitting.shape)
+                    .padding(3)
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 
