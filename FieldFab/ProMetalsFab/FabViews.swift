@@ -378,6 +378,7 @@ struct FabFittingEditor: View {
     let onSave: (FabFitting) -> Void
     let dismissAfterSave: Bool
     @State private var showError = false
+    @State private var show3DPreview = false
     @State private var customizedTransition = false
     @FocusState private var dimensionFocused: Bool
 
@@ -786,6 +787,15 @@ Section("Connections") {
                     }
                     Text(fitting.dimensionLegend)
                         .font(.caption).foregroundColor(.secondary)
+                    Button {
+                        dimensionFocused = false
+                        show3DPreview = true
+                    } label: {
+                        Label("View 3D", systemImage: "cube.transparent")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 38)
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
                 measurementsAndAlignment
                 connectorSection
@@ -871,6 +881,73 @@ Section("Connections") {
         .alert("Check Measurements", isPresented: $showError) {
             Button("OK") {}
         } message: { Text(fitting.validationMessage ?? "Please check your fitting.") }
+        .sheet(isPresented: $show3DPreview) {
+            FabReadOnly3DPreview(fitting: fitting)
+        }
+    }
+}
+
+// The original FieldFab SceneKit engine already constructs dimension-driven
+// rectangular walls. Adapt only fitting types it can represent correctly.
+// Other fitting types intentionally display an honest unsupported message
+// until their dedicated mesh generators are implemented.
+private struct FabReadOnly3DPreview: View {
+    @Environment(\.dismiss) private var dismiss
+    let fitting: FabFitting
+
+    private var legacyDuct: DuctTransition.DuctData? {
+        guard fitting.shape == .rectStraight || fitting.shape == .rectTransition else { return nil }
+        guard fitting.inletWidth > 0, fitting.inletHeight > 0, fitting.length > 0 else { return nil }
+        var duct = DuctTransition.DuctData()
+        duct.name = fitting.name.isEmpty ? fitting.shape.displayName : fitting.name
+        duct.isTransition = fitting.shape == .rectTransition
+        duct.unit = .inch
+        duct.measurements = [
+            fitting.inletWidth, fitting.inletHeight, fitting.length,
+            fitting.shape == .rectTransition ? fitting.offsetX : 0,
+            fitting.shape == .rectTransition ? fitting.offsetY : 0,
+            fitting.shape == .rectTransition ? fitting.outletWidth : fitting.inletWidth,
+            fitting.shape == .rectTransition ? fitting.outletHeight : fitting.inletHeight
+        ]
+        return duct
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let duct = legacyDuct {
+                    GeometryReader { geo in
+                        DuctTransition.SceneView(
+                            geo: geo,
+                            textShown: false,
+                            ductwork: duct,
+                            ductSceneHitTest: { _ in },
+                            selectorShown: .constant(false)
+                        )
+                    }
+                    .overlay(alignment: .bottom) {
+                        Text("Read-only preview · Drag to rotate · Pinch to zoom")
+                            .font(.caption)
+                            .padding(10)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                            .padding(.bottom, 16)
+                    }
+                } else {
+                    ContentUnavailableView(
+                        "3D Preview Not Yet Available",
+                        systemImage: "cube.transparent",
+                        description: Text("The 3D mesh generator for \(fitting.shape.displayName) has not been added yet. Your fitting dimensions and 2D drawing are unaffected.")
+                    )
+                }
+            }
+            .navigationTitle("3D · \(fitting.shape.displayName)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
     }
 }
 
