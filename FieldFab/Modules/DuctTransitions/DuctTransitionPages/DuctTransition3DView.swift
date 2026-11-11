@@ -508,7 +508,7 @@ extension DuctTransition {
             changeFlow(scene)
             view.scene = scene
             view.currentDuctwork = ductwork
-            view.crossbrake = effectiveCrossBrake
+            view.crossbrake = crossBrake
             return view
         }
         func resetAR(_ view: UIViewType) {
@@ -533,7 +533,7 @@ extension DuctTransition {
             if uiView.currentDuctwork != ductwork || crossBrake != uiView.crossbrake {
                 geometryUpdateAll(uiView.scene, context: context)
                 uiView.currentDuctwork = ductwork
-                uiView.crossbrake = effectiveCrossBrake
+                uiView.crossbrake = crossBrake
             }
             materialUpdate(uiView.scene)
             helpersUpdate(uiView.scene)
