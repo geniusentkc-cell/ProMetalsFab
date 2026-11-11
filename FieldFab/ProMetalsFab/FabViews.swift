@@ -1098,9 +1098,13 @@ private struct FabReadOnly3DPreview: View {
      }
      private var metal: SCNMaterial {
          let material = SCNMaterial()
-         material.diffuse.contents = UIColor(red: 0.71, green: 0.75, blue: 0.79, alpha: 1)
-         material.metalness.contents = 0.5
-         material.roughness.contents = 0.42
+         // Match the galvanized finish used by the rectangular 3D engine.
+         material.diffuse.contents = UIImage(named: "galvanized-diffuse")
+             ?? UIColor(red: 0.71, green: 0.75, blue: 0.79, alpha: 1)
+         material.metalness.contents = UIImage(named: "galvanized-metallic") ?? 0.5
+         material.normal.contents = UIImage(named: "galvanized-normal")
+         material.roughness.contents = UIImage(named: "galvanized-roughness") ?? 0.42
+         material.lightingModel = .physicallyBased
          material.isDoubleSided = true
          return material
      }
