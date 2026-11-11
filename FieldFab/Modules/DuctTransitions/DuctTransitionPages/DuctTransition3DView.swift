@@ -82,6 +82,14 @@ extension DuctTransition {
             view.rendersContinuously = !energySaver
         }
         func bgTextureUpdate(_ view: UIViewType, _ scene: SCNScene?) {
+            if isFabPreview {
+                // Use a neutral backdrop in fabrication previews.
+                let background = UIColor.secondarySystemBackground
+                scene?.background.contents = background
+                scene?.lightingEnvironment.contents = background
+                view.backgroundColor = background
+                return
+            }
             if bgType == .image {
                 let img = UIImage(named: bgImage.rawValue)
                 scene?.background.contents = img
