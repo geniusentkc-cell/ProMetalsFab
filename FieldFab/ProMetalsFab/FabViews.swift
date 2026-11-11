@@ -1057,9 +1057,12 @@ private struct FabReadOnly3DPreview: View {
 
      func updateUIView(_ view: PreviewSceneView, context: Context) {
          if view.priorLabels != showDimensions {
-             view.scene = buildScene()
              view.priorLabels = showDimensions
-             focusCamera(view)
+             view.scene?.rootNode.enumerateChildNodes { node, _ in
+                 if node.name == "roundDimensionLabel" {
+                     node.isHidden = !showDimensions
+                 }
+             }
          }
          if view.priorResetID != resetID {
              view.priorResetID = resetID
@@ -1103,7 +1106,6 @@ private struct FabReadOnly3DPreview: View {
      }
 
      private func addLabel(_ text: String, at position: SCNVector3, to root: SCNNode, scale: Float) {
-         guard showDimensions else { return }
          let geometry = SCNText(string: text, extrusionDepth: 0)
          geometry.font = UIFont.boldSystemFont(ofSize: 1)
          geometry.flatness = 0.08
@@ -1113,12 +1115,19 @@ private struct FabReadOnly3DPreview: View {
          mat.isDoubleSided = true
          geometry.materials = [mat]
          let node = SCNNode(geometry: geometry)
+         node.name = "roundDimensionLabel"
+         node.isHidden = !showDimensions
          let (low, high) = geometry.boundingBox
          node.pivot = SCNMatrix4MakeTranslation((low.x + high.x)/2, (low.y + high.y)/2, 0)
          node.scale = SCNVector3(scale, scale, scale)
          node.position = position
          node.constraints = [SCNBillboardConstraint()]
-         root.addChildNode(node)
+         // Labels do not affect framing, but orbit with the model.
+         if let parent = root.parent {
+             parent.addChildNode(node)
+         } else {
+             root.addChildNode(node)
+         }
      }
 
      private func mesh(rings: [[SCNVector3]], closeStart: Bool = false,
@@ -1221,7 +1230,7 @@ private struct FabReadOnly3DPreview: View {
              let length = max(Float(m(fitting.length)), 0.001)
              let outRadius = max(Float(m(fitting.outletWidth))/2, 0.0005)
              // Flat-top eccentric reducers align the uppermost Z edges.
-             let shiftZ = fitting.reducerMode == .flatTop ? radius-outRadius : 0
+             let shiftZ = (fitting.reducerMode == .flatTop || fitting.shape == .roundEccentric) ? radius-outRadius : 0
              body.addChildNode(SCNNode(geometry: mesh(rings: [
                  circularRing(radius: radius, y: -length/2),
                  circularRing(radius: outRadius, y: length/2, shiftZ: shiftZ)
@@ -1255,7 +1264,7 @@ private struct FabReadOnly3DPreview: View {
              }
              body.addChildNode(SCNNode(geometry: mesh(rings: rings)))
              addLabel("A  " + dimension(fitting.inletWidth), at: SCNVector3(0, 0, radius+labelOffset/2), to: body, scale: labelSize)
-             addLabel("B  " + dimension(fitting.angle) + "°", at: SCNVector3(bendRadius*0.65, bendRadius*0.5, radius+labelOffset), to: body, scale: labelSize)
+             addLabel("B  " + String(format: "%g", fitting.angle) + "°", at: SCNVector3(bendRadius*0.65, bendRadius*0.5, radius+labelOffset), to: body, scale: labelSize)
          default: break
          }
          return scene
