@@ -18,6 +18,7 @@ extension DuctTransition {
         var crossbrake: Bool = false
         var particlePhysicsEnabled: Bool = false
         var lastPreviewActionID: Int = 0
+        var showingFabLabels: Bool = false
     }
     
     class DuctARSCNView: ARSCNView {
@@ -91,7 +92,7 @@ extension DuctTransition {
         }
         func materialUpdate(_ scene: SCNScene?) {
             for node in ductNode(scene).childNodes {
-                if node.name == "tnode" { continue }
+                if node.name == "tnode" || node.name == "fabDimensionLabel" { continue }
                 node.geometry?.firstMaterial?.diffuse.contents = UIImage(named: "\(texture)-diffuse")
                 node.geometry?.firstMaterial?.metalness.contents = UIImage(named: "\(texture)-metallic")
                 node.geometry?.firstMaterial?.normal.contents = UIImage(named: "\(texture)-normal")
@@ -277,6 +278,7 @@ extension DuctTransition {
             view.currentDuctwork = ductwork
             view.particlePhysicsEnabled = useParticles
             view.lastPreviewActionID = previewActionID
+            view.showingFabLabels = showFabLabels
             #if DEBUG
             view.debugOptions = [SCNDebugOptions(rawValue: 2048)]
             #endif
@@ -286,12 +288,13 @@ extension DuctTransition {
         func updateUIView(_ uiView: UIViewType, context: Context) {
             bgTextureUpdate(uiView, uiView.scene)
             energyUpdate(uiView)
-            if ductwork != uiView.currentDuctwork || crossBrake != uiView.crossbrake || useParticles != uiView.particlePhysicsEnabled {
+            if ductwork != uiView.currentDuctwork || crossBrake != uiView.crossbrake || useParticles != uiView.particlePhysicsEnabled || (isFabPreview && showFabLabels != uiView.showingFabLabels) {
                 geometryUpdateAll(uiView.scene)
                 if ductwork != uiView.currentDuctwork {moveCamera(uiView)}
                 uiView.currentDuctwork = ductwork
                 uiView.crossbrake = crossBrake
                 uiView.particlePhysicsEnabled = useParticles
+                uiView.showingFabLabels = showFabLabels
             }
             if isFabPreview && previewActionID != uiView.lastPreviewActionID {
                 performFabPreviewAction(previewAction, on: uiView)
