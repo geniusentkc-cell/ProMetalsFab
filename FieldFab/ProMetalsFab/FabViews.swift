@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import SceneKit
 
 struct FabHomeView: View {
     @EnvironmentObject private var store: FabStore
@@ -923,7 +924,35 @@ private struct FabReadOnly3DPreview: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let duct = legacyDuct {
+                if fitting.shape.isRound && !fitting.shape.isHeto && FabRoundScenePreview.isSupported(fitting.shape) {
+                    GeometryReader { _ in
+                        FabRoundScenePreview(fitting: fitting,
+                                             showDimensions: showDimensions,
+                                             resetID: previewActionID)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        Toggle("Dimensions", isOn: $showDimensions)
+                            .font(.caption)
+                            .padding(10)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                            .padding(12)
+                    }
+                    .overlay(alignment: .bottom) {
+                        VStack(spacing: 10) {
+                            Button { control(3) } label: {
+                                Label("Reset View", systemImage: "arrow.counterclockwise")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.large)
+                            Text("Read-only · Drag to orbit · Pinch to zoom")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(10)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .padding(.bottom, 12)
+                    }
+                } else if let duct = legacyDuct {
                     GeometryReader { geo in
                         DuctTransition.SceneView(
                             geo: geo,
@@ -947,18 +976,10 @@ private struct FabReadOnly3DPreview: View {
                     }
                     .overlay(alignment: .bottom) {
                         VStack(spacing: 10) {
-                            HStack(spacing: 16) {
-                                Button { control(-1) } label: { Image(systemName: "arrow.left") }
-                                    .accessibilityLabel("Rotate left")
-                                Button { control(2) } label: { Image(systemName: "arrow.up") }
-                                    .accessibilityLabel("Rotate up")
-                                Button { control(-2) } label: { Image(systemName: "arrow.down") }
-                                    .accessibilityLabel("Rotate down")
-                                Button { control(1) } label: { Image(systemName: "arrow.right") }
-                                    .accessibilityLabel("Rotate right")
-                                Button { control(3) } label: { Label("Reset", systemImage: "arrow.counterclockwise") }
-                                    .accessibilityLabel("Reset 3D view")
+                            Button { control(3) } label: {
+                                Label("Reset View", systemImage: "arrow.counterclockwise")
                             }
+                            .accessibilityLabel("Reset 3D view")
                             .buttonStyle(.bordered)
                             .controlSize(.large)
                             .font(.headline)
@@ -997,6 +1018,267 @@ private struct FabReadOnly3DPreview: View {
         }
     }
 }
+
+
+ // MARK: - ProMetalsFab dimension-driven, read-only round SceneKit previews.
+ // Dimensions are inches in the fitting model; rendering uses meters.
+ private struct FabRoundScenePreview: UIViewRepresentable {
+     let fitting: FabFitting
+     let showDimensions: Bool
+     let resetID: Int
+
+     static func isSupported(_ shape: FabShape) -> Bool {
+         switch shape {
+         case .roundSpiral, .roundStraight, .roundReducer, .roundEccentric,
+              .roundEndCap, .roundElbow45, .roundElbow90: return true
+         default: return false
+         }
+     }
+
+     final class PreviewSceneView: SCNView {
+         var priorResetID = 0
+         var priorLabels = true
+         var initialCameraPosition = SCNVector3Zero
+         var initialCameraTarget = SCNVector3Zero
+     }
+
+     func makeUIView(context: Context) -> PreviewSceneView {
+         let view = PreviewSceneView(frame: .zero)
+         view.allowsCameraControl = true
+         view.autoenablesDefaultLighting = true
+         view.backgroundColor = UIColor.secondarySystemBackground
+         view.antialiasingMode = .multisampling4X
+         view.scene = buildScene()
+         view.priorResetID = resetID
+         view.priorLabels = showDimensions
+         focusCamera(view)
+         return view
+     }
+
+     func updateUIView(_ view: PreviewSceneView, context: Context) {
+         if view.priorLabels != showDimensions {
+             view.scene = buildScene()
+             view.priorLabels = showDimensions
+             focusCamera(view)
+         }
+         if view.priorResetID != resetID {
+             view.priorResetID = resetID
+             focusCamera(view)
+         }
+     }
+
+     private func focusCamera(_ view: PreviewSceneView) {
+         guard let scene = view.scene,
+               let body = scene.rootNode.childNode(withName: "fitting", recursively: false) else { return }
+         let (low, high) = body.boundingBox
+         let center = SCNVector3((low.x + high.x)/2, (low.y + high.y)/2, (low.z + high.z)/2)
+         let x = high.x-low.x, y = high.y-low.y, z = high.z-low.z
+         let span = max(sqrt(x*x+y*y+z*z), 0.2)
+         let camera = SCNNode()
+         camera.camera = SCNCamera()
+         camera.camera?.zNear = 0.005
+         camera.camera?.zFar = 500
+         camera.position = SCNVector3(center.x + span * 1.25, center.y + span * 0.85, center.z + span * 1.75)
+         camera.look(at: center)
+         scene.rootNode.childNode(withName: "previewCamera", recursively: false)?.removeFromParentNode()
+         camera.name = "previewCamera"
+         scene.rootNode.addChildNode(camera)
+         view.pointOfView = camera
+         view.initialCameraPosition = camera.position
+         view.initialCameraTarget = center
+     }
+
+     private var toMeters: CGFloat { 0.0254 }
+     private func m(_ inches: Double) -> CGFloat { CGFloat(inches) * toMeters }
+     private func dimension(_ inches: Double) -> String {
+         String(format: "%g", inches) + "\u{2033}"
+     }
+     private var metal: SCNMaterial {
+         let material = SCNMaterial()
+         material.diffuse.contents = UIColor(red: 0.71, green: 0.75, blue: 0.79, alpha: 1)
+         material.metalness.contents = 0.5
+         material.roughness.contents = 0.42
+         material.isDoubleSided = true
+         return material
+     }
+
+     private func addLabel(_ text: String, at position: SCNVector3, to root: SCNNode, scale: Float) {
+         guard showDimensions else { return }
+         let geometry = SCNText(string: text, extrusionDepth: 0)
+         geometry.font = UIFont.boldSystemFont(ofSize: 1)
+         geometry.flatness = 0.08
+         let mat = SCNMaterial()
+         mat.diffuse.contents = UIColor.systemYellow
+         mat.lightingModel = .constant
+         mat.isDoubleSided = true
+         geometry.materials = [mat]
+         let node = SCNNode(geometry: geometry)
+         let (low, high) = geometry.boundingBox
+         node.pivot = SCNMatrix4MakeTranslation((low.x + high.x)/2, (low.y + high.y)/2, 0)
+         node.scale = SCNVector3(scale, scale, scale)
+         node.position = position
+         node.constraints = [SCNBillboardConstraint()]
+         root.addChildNode(node)
+     }
+
+     private func mesh(rings: [[SCNVector3]], closeStart: Bool = false,
+                       closeEnd: Bool = false) -> SCNGeometry {
+         let count = rings[0].count
+         let points = rings.flatMap { $0 }
+         var indices: [UInt32] = []
+         if rings.count >= 2 {
+             for row in 0..<(rings.count - 1) {
+                 for col in 0..<count {
+                     let next = (col + 1) % count
+                     let a = UInt32(row * count + col)
+                     let b = UInt32(row * count + next)
+                     let c = UInt32((row + 1) * count + col)
+                     let d = UInt32((row + 1) * count + next)
+                     indices.append(contentsOf: [a,c,b,b,c,d])
+                 }
+             }
+         }
+         var vertices = points
+         if closeStart {
+             let center = average(rings[0])
+             let idx = UInt32(vertices.count)
+             vertices.append(center)
+             for col in 0..<count {
+                 indices.append(contentsOf: [idx, UInt32((col+1)%count), UInt32(col)])
+             }
+         }
+         if closeEnd {
+             let center = average(rings[rings.count-1])
+             let idx = UInt32(vertices.count)
+             vertices.append(center)
+             let base = UInt32((rings.count-1)*count)
+             for col in 0..<count {
+                 indices.append(contentsOf: [idx,base+UInt32(col),base+UInt32((col+1)%count)])
+             }
+         }
+         let vData = vertices.withUnsafeBufferPointer { Data(buffer: $0) }
+         let iData = indices.withUnsafeBufferPointer { Data(buffer: $0) }
+         let source = SCNGeometrySource(data: vData, semantic: .vertex,
+                                       vectorCount: vertices.count,
+                                       usesFloatComponents: true,
+                                       componentsPerVector: 3,
+                                       bytesPerComponent: MemoryLayout<Float>.size,
+                                       dataOffset: 0,
+                                       dataStride: MemoryLayout<SCNVector3>.stride)
+         let element = SCNGeometryElement(data: iData, primitiveType: .triangles,
+                                          primitiveCount: indices.count/3,
+                                          bytesPerIndex: MemoryLayout<UInt32>.size)
+         let geo = SCNGeometry(sources: [source], elements: [element])
+         geo.materials = [metal]
+         return geo
+     }
+     private func average(_ points: [SCNVector3]) -> SCNVector3 {
+         let n = Float(points.count)
+         return SCNVector3(points.reduce(Float(0)) { $0+$1.x }/n,
+                           points.reduce(Float(0)) { $0+$1.y }/n,
+                           points.reduce(Float(0)) { $0+$1.z }/n)
+     }
+     private func circularRing(radius: Float, y: Float, shiftX: Float = 0,
+                               shiftZ: Float = 0, sides: Int = 64) -> [SCNVector3] {
+         (0..<sides).map { index in
+             let angle = Float(index)*2*Float.pi/Float(sides)
+             return SCNVector3(shiftX+radius*cos(angle), y, shiftZ+radius*sin(angle))
+         }
+     }
+
+     private func buildScene() -> SCNScene {
+         let scene = SCNScene()
+         let body = SCNNode()
+         body.name = "fitting"
+         scene.rootNode.addChildNode(body)
+         let diameter = max(Float(m(fitting.inletWidth)), 0.001)
+         let radius = diameter/2
+         let labelOffset = max(diameter*0.75, 0.075)
+         let labelSize = max(diameter*0.15, 0.013)
+         switch fitting.shape {
+         case .roundStraight, .roundSpiral:
+             let length = max(Float(m(fitting.length)), 0.001)
+             let geo = mesh(rings: [circularRing(radius: radius, y: -length/2),
+                                    circularRing(radius: radius, y: length/2)])
+             body.addChildNode(SCNNode(geometry: geo))
+             if fitting.shape == .roundSpiral {
+                 // A shallow spiral seam gives visual orientation; the user-entered
+                 // diameter and length still determine the actual cylinder geometry.
+                 let turns = max(1, min(30, Int(fitting.length / max(fitting.inletWidth, 1) * 2)))
+                 let n = turns*64
+                 let positions = (0...n).map { i -> SCNVector3 in
+                     let t = Float(i)/Float(n)
+                     let theta = t*Float(turns)*2*Float.pi
+                     return SCNVector3((radius+0.0006)*cos(theta),
+                                       -length/2+t*length, (radius+0.0006)*sin(theta))
+                 }
+                 let seam = SCNNode(geometry: line(points: positions))
+                 body.addChildNode(seam)
+             }
+             addLabel("A  " + dimension(fitting.length), at: SCNVector3(radius+labelOffset, 0, 0), to: body, scale: labelSize)
+             addLabel("B  " + dimension(fitting.inletWidth), at: SCNVector3(0, -length/2, radius+labelOffset/2), to: body, scale: labelSize)
+         case .roundReducer, .roundEccentric:
+             let length = max(Float(m(fitting.length)), 0.001)
+             let outRadius = max(Float(m(fitting.outletWidth))/2, 0.0005)
+             // Flat-top eccentric reducers align the uppermost Z edges.
+             let shiftZ = fitting.reducerMode == .flatTop ? radius-outRadius : 0
+             body.addChildNode(SCNNode(geometry: mesh(rings: [
+                 circularRing(radius: radius, y: -length/2),
+                 circularRing(radius: outRadius, y: length/2, shiftZ: shiftZ)
+             ])))
+             addLabel("A  " + dimension(fitting.inletWidth), at: SCNVector3(0, -length/2, radius+labelOffset/2), to: body, scale: labelSize)
+             addLabel("B  " + dimension(fitting.outletWidth), at: SCNVector3(0, length/2, outRadius+shiftZ+labelOffset/2), to: body, scale: labelSize)
+             addLabel("C  " + dimension(fitting.length), at: SCNVector3(radius+labelOffset, 0, 0), to: body, scale: labelSize)
+         case .roundEndCap:
+             // A closed disk, one open end. Display a shallow rim for clarity.
+             let depth = max(diameter*0.05, 0.006)
+             body.addChildNode(SCNNode(geometry: mesh(rings: [
+                 circularRing(radius: radius, y: -depth/2),
+                 circularRing(radius: radius, y: depth/2)
+             ], closeEnd: true)))
+             addLabel("A  " + dimension(fitting.inletWidth), at: SCNVector3(0, 0, radius+labelOffset/2), to: body, scale: labelSize)
+         case .roundElbow45, .roundElbow90:
+             let angle = Float(fitting.angle * .pi / 180)
+             let bendRadius = radius * Float(fitting.radiusFactor == .one ? 2.0 : 3.0)
+             let sections = max(16, Int(ceil(fitting.angle/4)))
+             let rings = (0...sections).map { step -> [SCNVector3] in
+                 let theta = angle * Float(step)/Float(sections)
+                 let cx = bendRadius*(1-cos(theta))
+                 let cy = bendRadius*sin(theta)
+                 return (0..<64).map { index in
+                     let phi = Float(index)*2*Float.pi/64
+                     let radial = radius*cos(phi)
+                     return SCNVector3(cx + radial*cos(theta),
+                                       cy - radial*sin(theta),
+                                       radius*sin(phi))
+                 }
+             }
+             body.addChildNode(SCNNode(geometry: mesh(rings: rings)))
+             addLabel("A  " + dimension(fitting.inletWidth), at: SCNVector3(0, 0, radius+labelOffset/2), to: body, scale: labelSize)
+             addLabel("B  " + dimension(fitting.angle) + "°", at: SCNVector3(bendRadius*0.65, bendRadius*0.5, radius+labelOffset), to: body, scale: labelSize)
+         default: break
+         }
+         return scene
+     }
+
+     private func line(points: [SCNVector3]) -> SCNGeometry {
+         let source = SCNGeometrySource(vertices: points)
+         var indices: [UInt32] = []
+         for i in 0..<(points.count-1) {
+             indices.append(contentsOf: [UInt32(i), UInt32(i+1)])
+         }
+         let data = indices.withUnsafeBufferPointer { Data(buffer: $0) }
+         let element = SCNGeometryElement(data: data, primitiveType: .line,
+                                          primitiveCount: indices.count/2,
+                                          bytesPerIndex: MemoryLayout<UInt32>.size)
+         let geometry = SCNGeometry(sources: [source], elements: [element])
+         let seamMaterial = SCNMaterial()
+         seamMaterial.diffuse.contents = UIColor.darkGray
+         seamMaterial.lightingModel = .constant
+         geometry.materials = [seamMaterial]
+         return geometry
+     }
+ }
 
 // Shared image source for both the iPhone editor and exported PDF.
 struct FabDiagramView: View {
