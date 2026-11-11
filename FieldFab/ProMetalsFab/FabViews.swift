@@ -894,6 +894,14 @@ Section("Connections") {
 private struct FabReadOnly3DPreview: View {
     @Environment(\.dismiss) private var dismiss
     let fitting: FabFitting
+    @State private var previewAction = 0
+    @State private var previewActionID = 0
+    @State private var showDimensions = true
+
+    private func control(_ action: Int) {
+        previewAction = action
+        previewActionID += 1
+    }
 
     private var legacyDuct: DuctTransition.DuctData? {
         guard fitting.shape == .rectStraight || fitting.shape == .rectTransition else { return nil }
@@ -922,15 +930,46 @@ private struct FabReadOnly3DPreview: View {
                             textShown: false,
                             ductwork: duct,
                             ductSceneHitTest: { _ in },
-                            selectorShown: .constant(false)
+                            selectorShown: .constant(false),
+                            isFabPreview: true,
+                            previewAction: previewAction,
+                            previewActionID: previewActionID,
+                            showFabLabels: showDimensions
                         )
                     }
-                    .overlay(alignment: .bottom) {
-                        Text("Read-only preview · Drag to rotate · Pinch to zoom")
+                    .overlay(alignment: .topTrailing) {
+                        Toggle("Dimensions", isOn: $showDimensions)
+                            .toggleStyle(.switch)
                             .font(.caption)
                             .padding(10)
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                            .padding(.bottom, 16)
+                            .padding(12)
+                    }
+                    .overlay(alignment: .bottom) {
+                        VStack(spacing: 10) {
+                            HStack(spacing: 16) {
+                                Button { control(-1) } label: { Image(systemName: "arrow.left") }
+                                    .accessibilityLabel("Rotate left")
+                                Button { control(2) } label: { Image(systemName: "arrow.up") }
+                                    .accessibilityLabel("Rotate up")
+                                Button { control(-2) } label: { Image(systemName: "arrow.down") }
+                                    .accessibilityLabel("Rotate down")
+                                Button { control(1) } label: { Image(systemName: "arrow.right") }
+                                    .accessibilityLabel("Rotate right")
+                                Button { control(3) } label: { Label("Reset", systemImage: "arrow.counterclockwise") }
+                                    .accessibilityLabel("Reset 3D view")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.large)
+                            .font(.headline)
+                            Text("Read-only · Drag to orbit · Pinch to zoom")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(10)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 12)
                     }
                 } else {
                     VStack(spacing: 14) {
