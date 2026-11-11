@@ -66,6 +66,8 @@ extension DuctTransition {
         var previewActionID = 0
         var showFabLabels = false
         private var useParticles: Bool { particlePhysicsEnabled && !isFabPreview }
+        // ProMetalsFab previews always show smooth sheet-metal faces.
+        private var effectiveCrossBrake: Bool { !isFabPreview && crossBrake }
         @State var cameraRollTime: Date = Date()
         
         func ductNode(_ scene: SCNScene?) -> SCNNode {
@@ -107,7 +109,7 @@ extension DuctTransition {
             dNode.name = "duct"
             let vdata = ductwork.vertexData
             for face in DuctTransition.Face.allCases {
-                let faceNode = DuctTransition.FaceGeometry.generate(data: vdata, face: face, crossBrake: crossBrake)
+                let faceNode = DuctTransition.FaceGeometry.generate(data: vdata, face: face, crossBrake: effectiveCrossBrake)
                     .toNode(name: face.localizedString)
                 dNode.addChildNode(faceNode)
                 for edge in DuctTransition.TabEdge.allCases {
@@ -269,7 +271,7 @@ extension DuctTransition {
             geometryUpdateAll(scene)
             materialUpdate(scene)
             helpersUpdate(scene)
-            view.crossbrake = crossBrake
+            view.crossbrake = effectiveCrossBrake
             let pressG = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.hit(g:)))
             
             view.addGestureRecognizer(pressG)
@@ -288,11 +290,11 @@ extension DuctTransition {
         func updateUIView(_ uiView: UIViewType, context: Context) {
             bgTextureUpdate(uiView, uiView.scene)
             energyUpdate(uiView)
-            if ductwork != uiView.currentDuctwork || crossBrake != uiView.crossbrake || useParticles != uiView.particlePhysicsEnabled || (isFabPreview && showFabLabels != uiView.showingFabLabels) {
+            if ductwork != uiView.currentDuctwork || effectiveCrossBrake != uiView.crossbrake || useParticles != uiView.particlePhysicsEnabled || (isFabPreview && showFabLabels != uiView.showingFabLabels) {
                 geometryUpdateAll(uiView.scene)
                 if ductwork != uiView.currentDuctwork {moveCamera(uiView)}
                 uiView.currentDuctwork = ductwork
-                uiView.crossbrake = crossBrake
+                uiView.crossbrake = effectiveCrossBrake
                 uiView.particlePhysicsEnabled = useParticles
                 uiView.showingFabLabels = showFabLabels
             }
@@ -506,7 +508,7 @@ extension DuctTransition {
             changeFlow(scene)
             view.scene = scene
             view.currentDuctwork = ductwork
-            view.crossbrake = crossBrake
+            view.crossbrake = effectiveCrossBrake
             return view
         }
         func resetAR(_ view: UIViewType) {
@@ -531,7 +533,7 @@ extension DuctTransition {
             if uiView.currentDuctwork != ductwork || crossBrake != uiView.crossbrake {
                 geometryUpdateAll(uiView.scene, context: context)
                 uiView.currentDuctwork = ductwork
-                uiView.crossbrake = crossBrake
+                uiView.crossbrake = effectiveCrossBrake
             }
             materialUpdate(uiView.scene)
             helpersUpdate(uiView.scene)
