@@ -933,11 +933,19 @@ private struct FabReadOnly3DPreview: View {
                             .padding(.bottom, 16)
                     }
                 } else {
-                    ContentUnavailableView(
-                        "3D Preview Not Yet Available",
-                        systemImage: "cube.transparent",
-                        description: Text("The 3D mesh generator for \(fitting.shape.displayName) has not been added yet. Your fitting dimensions and 2D drawing are unaffected.")
-                    )
+                    VStack(spacing: 14) {
+                        Image(systemName: "cube.transparent")
+                            .font(.system(size: 48))
+                            .foregroundColor(.secondary)
+                        Text("3D Preview Not Yet Available")
+                            .font(.headline)
+                        Text("The 3D mesh generator for \(fitting.shape.displayName) has not been added yet. Your fitting dimensions and 2D drawing are unaffected.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(28)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .navigationTitle("3D · \(fitting.shape.displayName)")
