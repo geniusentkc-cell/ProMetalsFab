@@ -1030,7 +1030,9 @@ private struct FabReadOnly3DPreview: View {
      static func isSupported(_ shape: FabShape) -> Bool {
          switch shape {
          case .roundSpiral, .roundStraight, .roundReducer, .roundEccentric,
-              .roundEndCap, .roundElbow45, .roundElbow90, .squareRound: return true
+              .roundEndCap, .roundElbow45, .roundElbow90, .squareRound,
+              .roundHeto90, .roundHeto45, .rectEndCap, .rectElbow45,
+              .rectElbow90, .rectRadiusElbow, .rectTee: return true
          default: return false
          }
      }
@@ -1268,6 +1270,121 @@ private struct FabReadOnly3DPreview: View {
                         outletRadius * sin(angle))
          }
          return [rectangle, circle]
+     }
+
+     // Four real corners for rectangular duct ends; no cosmetic crease lines.
+     private func rectangularEnd(width: Float, depth: Float, y: Float) -> [SCNVector3] {
+         let w = max(width, 0.001) / 2
+         let d = max(depth, 0.001) / 2
+         return [SCNVector3(w, y, d), SCNVector3(-w, y, d),
+                 SCNVector3(-w, y, -d), SCNVector3(w, y, -d)]
+     }
+
+     // A cross-section normal to a bend travelling in the XY plane.
+     private func bentRectangle(x: Float, y: Float, angle: Float,
+                                width: Float, depth: Float,
+                                zShift: Float = 0) -> [SCNVector3] {
+         let w = max(width, 0.001) / 2
+         let d = max(depth, 0.001) / 2
+         let c = cos(angle), si = sin(angle)
+         return [(w,d),(-w,d),(-w,-d),(w,-d)].map { u, v in
+             SCNVector3(x + u * c, y - u * si, zShift + v)
+         }
+     }
+
+     // Rectangular branch sleeve whose length runs along the X axis.
+     private func branchEnd(x: Float, width: Float, depth: Float,
+                            centerY: Float = 0) -> [SCNVector3] {
+         let w = max(width, 0.001) / 2
+         let d = max(depth, 0.001) / 2
+         return [SCNVector3(x, centerY+w, d), SCNVector3(x, centerY-w, d),
+                 SCNVector3(x, centerY-w, -d), SCNVector3(x, centerY+w, -d)]
+     }
+
+     // High-efficiency takeoff: an open rectangular mounting mouth lofts to
+     // an open circular mouth while its centerline turns through 45 or 90 deg.
+     // This is a visual guide, not a developed cut-pattern calculation.
+     private func hetoRings(rectWidth: Float, rectDepth: Float,
+                            roundRadius: Float, centerlineLength: Float,
+                            radians: Float) -> [[SCNVector3]] {
+         let w = max(rectWidth, 0.001) / 2
+         let d = max(rectDepth, 0.001) / 2
+         let angles = squareRoundAngles(halfWidth: w, halfDepth: d)
+         let bendRadius = centerlineLength / max(radians, 0.01)
+         let sections = 20
+         return (0...sections).map { step -> [SCNVector3] in
+             let t = Float(step) / Float(sections)
+             let theta = radians * t
+             let cx = bendRadius * (1 - cos(theta))
+             let cy = bendRadius * sin(theta)
+             return angles.map { phi in
+                 let dx = cos(phi), dz = sin(phi)
+                 let tx = abs(dx) > 0.00001 ? w / abs(dx) : Float.greatestFiniteMagnitude
+                 let tz = abs(dz) > 0.00001 ? d / abs(dz) : Float.greatestFiniteMagnitude
+                 let r = min(tx, tz)
+                 let across = (1 - t) * r * dx + t * roundRadius * dx
+                 let alongDepth = (1 - t) * r * dz + t * roundRadius * dz
+                 return SCNVector3(cx + across * cos(theta),
+                                   cy - across * sin(theta), alongDepth)
+             }
+         }
+     }
+
+     // The tee is assembled from three open rectangular sleeves. The central
+     // overlap is illustrative; throat sizes control each outlet and reach.
+     private func addTee(to body: SCNNode, labelOffset: Float,
+                         labelSize: Float) {
+         let a = max(Float(m(fitting.inletWidth)), 0.001)
+         let b = max(Float(m(fitting.inletHeight)), 0.001)
+         let c = max(Float(m(fitting.outletWidth)), 0.001)
+         let d = max(Float(m(fitting.outletHeight)), 0.001)
+         let e = max(Float(m(fitting.teeE)), 0.001)
+         let f = max(Float(m(fitting.teeF)), 0.001)
+         let trunk = max(Float(m(8)), a * 0.6)
+         let left = max(Float(m(6)), Float(m(fitting.teeG + fitting.teeH)) + c * 0.35)
+         let right = max(Float(m(6)), Float(m(fitting.teeI + fitting.teeJ)) + e * 0.35)
+         body.addChildNode(SCNNode(geometry: mesh(rings: [
+             rectangularEnd(width: a, depth: b, y: -trunk),
+             rectangularEnd(width: a, depth: b, y: 0)
+         ])))
+         body.addChildNode(SCNNode(geometry: mesh(rings: [
+             branchEnd(x: -left, width: c, depth: d),
+             branchEnd(x: 0, width: c, depth: d)
+         ])))
+         body.addChildNode(SCNNode(geometry: mesh(rings: [
+             branchEnd(x: 0, width: e, depth: f),
+             branchEnd(x: right, width: e, depth: f)
+         ])))
+         addLabel("A  " + dimension(fitting.inletWidth),
+                  at: SCNVector3(0, -trunk, b / 2 + labelOffset/2),
+                  to: body, scale: labelSize)
+         addLabel("B  " + dimension(fitting.inletHeight),
+                  at: SCNVector3(a/2 + labelOffset/2, -trunk, 0),
+                  to: body, scale: labelSize)
+         addLabel("C  " + dimension(fitting.outletWidth),
+                  at: SCNVector3(-left, c/2 + labelOffset/2, 0),
+                  to: body, scale: labelSize)
+         addLabel("D  " + dimension(fitting.outletHeight),
+                  at: SCNVector3(-left, 0, d/2 + labelOffset/2),
+                  to: body, scale: labelSize)
+         addLabel("E  " + dimension(fitting.teeE),
+                  at: SCNVector3(right, e/2 + labelOffset/2, 0),
+                  to: body, scale: labelSize)
+         addLabel("F  " + dimension(fitting.teeF),
+                  at: SCNVector3(right, 0, f/2 + labelOffset/2),
+                  to: body, scale: labelSize)
+         addLabel("G  " + dimension(fitting.teeG),
+                  at: SCNVector3(-left * 0.45, c/2 + labelOffset, -d/2),
+                  to: body, scale: labelSize * 0.8)
+         addLabel("H  " + dimension(fitting.teeH),
+                  at: SCNVector3(-left * 0.45, -c/2 - labelOffset, -d/2),
+                  to: body, scale: labelSize * 0.8)
+         addLabel("I  " + dimension(fitting.teeI),
+                  at: SCNVector3(right * 0.45, -e/2 - labelOffset, -f/2),
+                  to: body, scale: labelSize * 0.8)
+         addLabel("J  " + dimension(fitting.teeJ),
+                  at: SCNVector3(right * 0.45, e/2 + labelOffset, -f/2),
+                  to: body, scale: labelSize * 0.8)
      }
 
      private func buildScene() -> SCNScene {
