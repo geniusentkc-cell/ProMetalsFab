@@ -101,13 +101,16 @@ extension DuctTransition {
             }
         }
         func materialUpdate(_ scene: SCNScene?) {
+            // Match the galvanized appearance across all ProMetalsFab previews.
+            // Preserve configurable FieldFab materials outside the fabrication app.
+            let finish = isFabPreview ? "galvanized" : texture
             for node in ductNode(scene).childNodes {
                 if node.name == "tnode" || node.name == "fabDimensionLabel" { continue }
-                node.geometry?.firstMaterial?.diffuse.contents = UIImage(named: "\(texture)-diffuse")
-                node.geometry?.firstMaterial?.metalness.contents = UIImage(named: "\(texture)-metallic")
-                node.geometry?.firstMaterial?.normal.contents = UIImage(named: "\(texture)-normal")
-                node.geometry?.firstMaterial?.roughness.contents = UIImage(named: "\(texture)-roughness")
-                node.geometry?.firstMaterial?.lightingModel = lighting.scn
+                node.geometry?.firstMaterial?.diffuse.contents = UIImage(named: "\(finish)-diffuse")
+                node.geometry?.firstMaterial?.metalness.contents = UIImage(named: "\(finish)-metallic")
+                node.geometry?.firstMaterial?.normal.contents = UIImage(named: "\(finish)-normal")
+                node.geometry?.firstMaterial?.roughness.contents = UIImage(named: "\(finish)-roughness")
+                node.geometry?.firstMaterial?.lightingModel = isFabPreview ? .physicallyBased : lighting.scn
             }
         }
         
