@@ -1287,8 +1287,9 @@ private struct FabReadOnly3DPreview: View {
          let w = max(width, 0.001) / 2
          let d = max(depth, 0.001) / 2
          let c = cos(angle), si = sin(angle)
-         return [(w,d),(-w,d),(-w,-d),(w,-d)].map { u, v in
-             SCNVector3(x + u * c, y - u * si, zShift + v)
+         return [(w,d),(-w,d),(-w,-d),(w,-d)].map { corner in
+             SCNVector3(x + corner.0 * c, y - corner.0 * si,
+                        zShift + corner.1)
          }
      }
 
