@@ -924,7 +924,7 @@ private struct FabReadOnly3DPreview: View {
     var body: some View {
         NavigationStack {
             Group {
-                if fitting.shape.isRound && !fitting.shape.isHeto && FabRoundScenePreview.isSupported(fitting.shape) {
+                if FabRoundScenePreview.isSupported(fitting.shape) {
                     GeometryReader { _ in
                         FabRoundScenePreview(fitting: fitting,
                                              showDimensions: showDimensions,
@@ -1030,7 +1030,7 @@ private struct FabReadOnly3DPreview: View {
      static func isSupported(_ shape: FabShape) -> Bool {
          switch shape {
          case .roundSpiral, .roundStraight, .roundReducer, .roundEccentric,
-              .roundEndCap, .roundElbow45, .roundElbow90: return true
+              .roundEndCap, .roundElbow45, .roundElbow90, .squareRound: return true
          default: return false
          }
      }
@@ -1199,6 +1199,19 @@ private struct FabReadOnly3DPreview: View {
          }
      }
 
+     // Keep radial stations aligned at both ends to avoid twisting the skin.
+     private func rectangularRing(halfWidth: Float, halfDepth: Float,
+                                  y: Float, sides: Int = 64) -> [SCNVector3] {
+         (0..<sides).map { index in
+             let angle = Float(index) * 2 * Float.pi / Float(sides)
+             let dx = cos(angle), dz = sin(angle)
+             let tx = abs(dx) > 0.00001 ? halfWidth / abs(dx) : Float.greatestFiniteMagnitude
+             let tz = abs(dz) > 0.00001 ? halfDepth / abs(dz) : Float.greatestFiniteMagnitude
+             let t = min(tx, tz)
+             return SCNVector3(t * dx, y, t * dz)
+         }
+     }
+
      private func buildScene() -> SCNScene {
          let scene = SCNScene()
          let body = SCNNode()
@@ -1214,22 +1227,31 @@ private struct FabReadOnly3DPreview: View {
              let geo = mesh(rings: [circularRing(radius: radius, y: -length/2),
                                     circularRing(radius: radius, y: length/2)])
              body.addChildNode(SCNNode(geometry: geo))
-             if fitting.shape == .roundSpiral {
-                 // A shallow spiral seam gives visual orientation; the user-entered
-                 // diameter and length still determine the actual cylinder geometry.
-                 let turns = max(1, min(30, Int(fitting.length / max(fitting.inletWidth, 1) * 2)))
-                 let n = turns*64
-                 let positions = (0...n).map { i -> SCNVector3 in
-                     let t = Float(i)/Float(n)
-                     let theta = t*Float(turns)*2*Float.pi
-                     return SCNVector3((radius+0.0006)*cos(theta),
-                                       -length/2+t*length, (radius+0.0006)*sin(theta))
-                 }
-                 let seam = SCNNode(geometry: line(points: positions))
-                 body.addChildNode(seam)
-             }
              addLabel("A  " + dimension(fitting.length), at: SCNVector3(radius+labelOffset, 0, 0), to: body, scale: labelSize)
              addLabel("B  " + dimension(fitting.inletWidth), at: SCNVector3(0, -length/2, radius+labelOffset/2), to: body, scale: labelSize)
+         case .squareRound:
+             // Matched contour stations give an untwisted open square-to-round loft.
+             let length = max(Float(m(fitting.length)), 0.001)
+             let halfWidth = max(Float(m(fitting.inletWidth)) / 2, 0.0005)
+             let halfDepth = max(Float(m(fitting.inletHeight)) / 2, 0.0005)
+             let outletRadius = max(Float(m(fitting.outletWidth)) / 2, 0.0005)
+             body.addChildNode(SCNNode(geometry: mesh(rings: [
+                 rectangularRing(halfWidth: halfWidth, halfDepth: halfDepth, y: -length / 2),
+                 circularRing(radius: outletRadius, y: length / 2)
+             ])))
+             let reach = max(halfWidth, halfDepth, outletRadius)
+             addLabel("A  " + dimension(fitting.inletWidth),
+                      at: SCNVector3(0, -length/2, halfDepth + labelOffset/2),
+                      to: body, scale: labelSize)
+             addLabel("B  " + dimension(fitting.inletHeight),
+                      at: SCNVector3(halfWidth + labelOffset/2, -length/2, 0),
+                      to: body, scale: labelSize)
+             addLabel("C  Ø " + dimension(fitting.outletWidth),
+                      at: SCNVector3(0, length/2, outletRadius + labelOffset/2),
+                      to: body, scale: labelSize)
+             addLabel("D  " + dimension(fitting.length),
+                      at: SCNVector3(reach + labelOffset, 0, 0),
+                      to: body, scale: labelSize)
          case .roundReducer, .roundEccentric:
              let length = max(Float(m(fitting.length)), 0.001)
              let outRadius = max(Float(m(fitting.outletWidth))/2, 0.0005)
