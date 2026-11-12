@@ -1438,6 +1438,99 @@ private struct FabReadOnly3DPreview: View {
              addLabel("A  " + dimension(fitting.inletWidth), at: SCNVector3(0, -length/2, radius+labelOffset/2), to: body, scale: labelSize)
              addLabel("B  " + dimension(fitting.outletWidth), at: SCNVector3(0, length/2, outRadius+shiftZ+labelOffset/2), to: body, scale: labelSize)
              addLabel("C  " + dimension(fitting.length), at: SCNVector3(radius+labelOffset, 0, 0), to: body, scale: labelSize)
+         case .rectEndCap:
+             // Closed front face, single open rectangular connection at the rear.
+             // The shallow illustrative rim is not a user-entered dimension.
+             let a = max(Float(m(fitting.inletWidth)), 0.001)
+             let b = max(Float(m(fitting.inletHeight)), 0.001)
+             let rim = max(Float(m(0.5)), min(a, b) * 0.05)
+             body.addChildNode(SCNNode(geometry: mesh(rings: [
+                 rectangularEnd(width: a, depth: b, y: -rim/2),
+                 rectangularEnd(width: a, depth: b, y: rim/2)
+             ], closeEnd: true)))
+             addLabel("A  " + dimension(fitting.inletWidth),
+                      at: SCNVector3(0, 0, b/2 + labelOffset/2),
+                      to: body, scale: labelSize)
+             addLabel("B  " + dimension(fitting.inletHeight),
+                      at: SCNVector3(a/2 + labelOffset/2, 0, 0),
+                      to: body, scale: labelSize)
+         case .rectElbow45, .rectElbow90, .rectRadiusElbow:
+             // A swept rectangular wall. Square-throat and radius-elbow types
+             // use different inside bend radii, without decorative break lines.
+             let a = max(Float(m(fitting.inletWidth)), 0.001)
+             let b = max(Float(m(fitting.inletHeight)), 0.001)
+             let c = max(Float(m(fitting.outletWidth)), 0.001)
+             let d = max(Float(m(fitting.outletHeight)), 0.001)
+             let isRadius = fitting.shape == .rectRadiusElbow
+             let sweep = fitting.shape == .rectElbow45 ? Float.pi / 4 : Float.pi / 2
+             let inside = isRadius ? max(Float(m(fitting.radius)), 0.001) : Float(0.001)
+             let centerlineRadius = inside + a/2
+             let straightIn = isRadius ? Float(0) : max(Float(m(fitting.straightIn)), 0)
+             let straightOut = isRadius ? Float(0) : max(Float(m(fitting.straightOut)), 0)
+             let topShift = isRadius ? Float(m(fitting.verticalValue)) : Float(0)
+             var rings: [[SCNVector3]] = []
+             if straightIn > 0.001 {
+                 rings.append(bentRectangle(x: 0, y: -straightIn, angle: 0,
+                                            width: a, depth: b))
+             }
+             rings.append(bentRectangle(x: 0, y: 0, angle: 0, width: a, depth: b))
+             let sections = fitting.shape == .rectElbow45 ? 14 : 24
+             for section in 1...sections {
+                 let t = Float(section) / Float(sections)
+                 let theta = sweep * t
+                 let cx = centerlineRadius * (1 - cos(theta))
+                 let cy = centerlineRadius * sin(theta)
+                 let width = a + (c - a) * t
+                 let depth = b + (d - b) * t
+                 rings.append(bentRectangle(x: cx, y: cy, angle: theta,
+                                            width: width, depth: depth,
+                                            zShift: topShift * t))
+             }
+             let exitX = centerlineRadius * (1 - cos(sweep))
+             let exitY = centerlineRadius * sin(sweep)
+             if straightOut > 0.001 {
+                 rings.append(bentRectangle(x: exitX + sin(sweep)*straightOut,
+                                            y: exitY + cos(sweep)*straightOut,
+                                            angle: sweep, width: c, depth: d,
+                                            zShift: topShift))
+             }
+             body.addChildNode(SCNNode(geometry: mesh(rings: rings)))
+             addLabel("A  " + dimension(fitting.inletWidth),
+                      at: SCNVector3(0, -straightIn, b/2 + labelOffset/2),
+                      to: body, scale: labelSize)
+             addLabel("B  " + dimension(fitting.inletHeight),
+                      at: SCNVector3(a/2 + labelOffset/2, -straightIn, 0),
+                      to: body, scale: labelSize)
+             addLabel("C  " + dimension(fitting.outletWidth),
+                      at: SCNVector3(exitX + sin(sweep)*straightOut,
+                                     exitY + cos(sweep)*straightOut,
+                                     topShift + d/2 + labelOffset/2),
+                      to: body, scale: labelSize)
+             addLabel("D  " + dimension(fitting.outletHeight),
+                      at: SCNVector3(exitX + c/2 + labelOffset/2, exitY,
+                                     topShift),
+                      to: body, scale: labelSize)
+             if isRadius {
+                 addLabel("E  Radius " + dimension(fitting.radius),
+                          at: SCNVector3(centerlineRadius * 0.65, centerlineRadius * 0.45,
+                                         -b/2 - labelOffset/2),
+                          to: body, scale: labelSize * 0.85)
+                 addLabel("F  Shift " + dimension(fitting.verticalValue),
+                          at: SCNVector3(exitX + labelOffset, exitY,
+                                         topShift - d/2 - labelOffset/2),
+                          to: body, scale: labelSize * 0.85)
+             } else {
+                 addLabel("E  " + dimension(fitting.straightIn),
+                          at: SCNVector3(-a/2 - labelOffset/2, -straightIn/2, 0),
+                          to: body, scale: labelSize * 0.85)
+                 addLabel("F  " + dimension(fitting.straightOut),
+                          at: SCNVector3(exitX + sin(sweep)*straightOut/2 + labelOffset/2,
+                                         exitY + cos(sweep)*straightOut/2,
+                                         -d/2 - labelOffset/2),
+                          to: body, scale: labelSize * 0.85)
+             }
+         case .rectTee:
+             addTee(to: body, labelOffset: labelOffset, labelSize: labelSize)
          case .roundEndCap:
              // A closed disk, one open end. Display a shallow rim for clarity.
              let depth = max(diameter*0.05, 0.006)
