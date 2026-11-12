@@ -1426,6 +1426,61 @@ private struct FabReadOnly3DPreview: View {
              addLabel("D  " + dimension(fitting.length),
                       at: SCNVector3(reach + labelOffset, 0, 0),
                       to: body, scale: labelSize)
+         case .roundHeto90, .roundHeto45:
+             // The rectangular opening is the mounting mouth. The round
+             // outlet turns through 90 or 45 degrees relative to that mouth.
+             let a = max(Float(m(fitting.inletWidth)), 0.001)
+             let b = max(Float(m(fitting.inletHeight)), 0.001)
+             let c = max(Float(m(fitting.outletWidth)), 0.001)
+             let outletRadius = c/2
+             let turn = fitting.shape == .roundHeto90 ? Float.pi/2 : Float.pi/4
+             // "Standard" is a fitting-shop sizing mode, not an explicit
+             // entered dimension; use a proportional illustrative length.
+             let standardLength = max(a, max(b, c)) * 1.1
+             let centerlineLength = fitting.hetoMode == .custom
+                 ? max(Float(m(fitting.length)), 0.001) : standardLength
+             let rings = hetoRings(rectWidth: a, rectDepth: b,
+                                   roundRadius: outletRadius,
+                                   centerlineLength: centerlineLength,
+                                   radians: turn)
+             body.addChildNode(SCNNode(geometry: mesh(rings: rings)))
+             let centerRadius = centerlineLength / turn
+             let exitX = centerRadius * (1 - cos(turn))
+             let exitY = centerRadius * sin(turn)
+             if fitting.isDampered {
+                 // A thin blade inside the round outlet indicates the selected
+                 // damper; shafts, seals, and specific hardware are intentionally
+                 // not modelled in this visual-only pass.
+                 let blade = SCNCylinder(radius: CGFloat(outletRadius * 0.88),
+                                         height: CGFloat(max(outletRadius * 0.035, 0.0015)))
+                 let bladeMaterial = SCNMaterial()
+                 bladeMaterial.diffuse.contents = UIColor(red: 0.46, green: 0.51, blue: 0.55, alpha: 1)
+                 bladeMaterial.metalness.contents = 0.75
+                 bladeMaterial.roughness.contents = 0.4
+                 bladeMaterial.isDoubleSided = true
+                 blade.materials = [bladeMaterial]
+                 let bladeNode = SCNNode(geometry: blade)
+                 bladeNode.position = SCNVector3(exitX - sin(turn)*outletRadius*0.18,
+                                                 exitY - cos(turn)*outletRadius*0.18, 0)
+                 bladeNode.eulerAngles.z = -turn
+                 body.addChildNode(bladeNode)
+             }
+             addLabel("A  " + dimension(fitting.inletWidth),
+                      at: SCNVector3(0, 0, b/2 + labelOffset/2),
+                      to: body, scale: labelSize)
+             addLabel("B  " + dimension(fitting.inletHeight),
+                      at: SCNVector3(a/2 + labelOffset/2, 0, 0),
+                      to: body, scale: labelSize)
+             addLabel("C  Ø " + dimension(fitting.outletWidth),
+                      at: SCNVector3(exitX + outletRadius*cos(turn) + labelOffset/2,
+                                     exitY + outletRadius*sin(turn), 0),
+                      to: body, scale: labelSize)
+             let lengthLabel = fitting.hetoMode == .custom
+                 ? dimension(fitting.length) : "STANDARD"
+             addLabel("D  " + lengthLabel,
+                      at: SCNVector3(exitX/2 + labelOffset,
+                                     exitY/2 + labelOffset/2, -b/2),
+                      to: body, scale: labelSize)
          case .roundReducer, .roundEccentric:
              let length = max(Float(m(fitting.length)), 0.001)
              let outRadius = max(Float(m(fitting.outletWidth))/2, 0.0005)
