@@ -1240,11 +1240,13 @@ private struct FabReadOnly3DPreview: View {
          var angles: [Float] = []
          for quadrant in 0..<4 {
              let base = Float(quadrant) * quarter
+             // A non-square rectangle has alternating corner angles.
+             let quadrantCorner = quadrant % 2 == 0 ? corner : quarter - corner
              for segment in 0..<16 {
                  let t = Float(segment)
                  let local = segment < 8
-                     ? corner * t / 8
-                     : corner + (quarter - corner) * (t - 8) / 8
+                     ? quadrantCorner * t / 8
+                     : quadrantCorner + (quarter - quadrantCorner) * (t - 8) / 8
                  angles.append(base + local)
              }
          }
