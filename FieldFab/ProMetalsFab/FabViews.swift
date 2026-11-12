@@ -924,9 +924,9 @@ private struct FabReadOnly3DPreview: View {
     var body: some View {
         NavigationStack {
             Group {
-                if FabRoundScenePreview.isSupported(fitting.shape) {
+                if FabFittingScenePreview.isSupported(fitting.shape) {
                     GeometryReader { _ in
-                        FabRoundScenePreview(fitting: fitting,
+                        FabFittingScenePreview(fitting: fitting,
                                              showDimensions: showDimensions,
                                              resetID: previewActionID)
                     }
@@ -1020,9 +1020,9 @@ private struct FabReadOnly3DPreview: View {
 }
 
 
- // MARK: - ProMetalsFab dimension-driven, read-only round SceneKit previews.
+ // MARK: - ProMetalsFab dimension-driven, read-only fitting SceneKit previews.
  // Dimensions are inches in the fitting model; rendering uses meters.
- private struct FabRoundScenePreview: UIViewRepresentable {
+ private struct FabFittingScenePreview: UIViewRepresentable {
      let fitting: FabFitting
      let showDimensions: Bool
      let resetID: Int
@@ -1619,23 +1619,6 @@ private struct FabReadOnly3DPreview: View {
          return scene
      }
 
-     private func line(points: [SCNVector3]) -> SCNGeometry {
-         let source = SCNGeometrySource(vertices: points)
-         var indices: [UInt32] = []
-         for i in 0..<(points.count-1) {
-             indices.append(contentsOf: [UInt32(i), UInt32(i+1)])
-         }
-         let data = indices.withUnsafeBufferPointer { Data(buffer: $0) }
-         let element = SCNGeometryElement(data: data, primitiveType: .line,
-                                          primitiveCount: indices.count/2,
-                                          bytesPerIndex: MemoryLayout<UInt32>.size)
-         let geometry = SCNGeometry(sources: [source], elements: [element])
-         let seamMaterial = SCNMaterial()
-         seamMaterial.diffuse.contents = UIColor.darkGray
-         seamMaterial.lightingModel = .constant
-         geometry.materials = [seamMaterial]
-         return geometry
-     }
  }
 
 // Shared image source for both the iPhone editor and exported PDF.
