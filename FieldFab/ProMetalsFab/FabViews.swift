@@ -1169,6 +1169,35 @@ private struct FabReadOnly3DPreview: View {
                  indices.append(contentsOf: [idx,base+UInt32(col),base+UInt32((col+1)%count)])
              }
          }
+         // Smooth explicit vertex normals eliminate visible triangulation
+         // artifacts without drawing break or segment lines on the shell.
+         var normals: [SCNVector3] = []
+         var texcoords: [CGPoint] = []
+         for row in 0..<rings.count {
+             for col in 0..<count {
+                 let prev = rings[row][(col + count - 1) % count]
+                 let next = rings[row][(col + 1) % count]
+                 let lower = rings[max(0, row - 1)][col]
+                 let upper = rings[min(rings.count - 1, row + 1)][col]
+                 let ux = next.x - prev.x, uy = next.y - prev.y, uz = next.z - prev.z
+                 let vx = upper.x - lower.x, vy = upper.y - lower.y, vz = upper.z - lower.z
+                 let nx = vy * uz - vz * uy
+                 let ny = vz * ux - vx * uz
+                 let nz = vx * uy - vy * ux
+                 let mag = max(sqrt(nx * nx + ny * ny + nz * nz), Float(0.00001))
+                 normals.append(SCNVector3(nx / mag, ny / mag, nz / mag))
+                 texcoords.append(CGPoint(x: CGFloat(col) / CGFloat(count),
+                                        y: CGFloat(row) / CGFloat(max(1, rings.count - 1))))
+             }
+         }
+         if closeStart {
+             normals.append(SCNVector3(0, -1, 0))
+             texcoords.append(CGPoint(x: 0.5, y: 0))
+         }
+         if closeEnd {
+             normals.append(SCNVector3(0, 1, 0))
+             texcoords.append(CGPoint(x: 0.5, y: 1))
+         }
          let vData = vertices.withUnsafeBufferPointer { Data(buffer: $0) }
          let iData = indices.withUnsafeBufferPointer { Data(buffer: $0) }
          let source = SCNGeometrySource(data: vData, semantic: .vertex,
@@ -1181,7 +1210,10 @@ private struct FabReadOnly3DPreview: View {
          let element = SCNGeometryElement(data: iData, primitiveType: .triangles,
                                           primitiveCount: indices.count/3,
                                           bytesPerIndex: MemoryLayout<UInt32>.size)
-         let geo = SCNGeometry(sources: [source], elements: [element])
+         let geo = SCNGeometry(sources: [source,
+                                         SCNGeometrySource(normals: normals),
+                                         SCNGeometrySource(textureCoordinates: texcoords)],
+                               elements: [element])
          geo.materials = [metal]
          return geo
      }
