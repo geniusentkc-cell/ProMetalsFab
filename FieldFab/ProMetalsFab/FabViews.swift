@@ -1231,17 +1231,41 @@ private struct FabReadOnly3DPreview: View {
          }
      }
 
-     // Keep radial stations aligned at both ends to avoid twisting the skin.
-     private func rectangularRing(halfWidth: Float, halfDepth: Float,
-                                  y: Float, sides: Int = 64) -> [SCNVector3] {
-         (0..<sides).map { index in
-             let angle = Float(index) * 2 * Float.pi / Float(sides)
+     // Explicitly sample each rectangular corner. Both rims use IDENTICAL
+     // angular stations so A x B is exact, C stays circular, and the loft
+     // does not introduce a twist or round off the rectangular corners.
+     private func squareRoundAngles(halfWidth: Float, halfDepth: Float) -> [Float] {
+         let corner = atan2(halfDepth, halfWidth)
+         let quarter = Float.pi / 2
+         var angles: [Float] = []
+         for quadrant in 0..<4 {
+             let base = Float(quadrant) * quarter
+             for segment in 0..<16 {
+                 let t = Float(segment)
+                 let local = segment < 8
+                     ? corner * t / 8
+                     : corner + (quarter - corner) * (t - 8) / 8
+                 angles.append(base + local)
+             }
+         }
+         return angles
+     }
+
+     private func squareRoundRings(halfWidth: Float, halfDepth: Float,
+                                   outletRadius: Float, length: Float) -> [[SCNVector3]] {
+         let angles = squareRoundAngles(halfWidth: halfWidth, halfDepth: halfDepth)
+         let rectangle = angles.map { angle -> SCNVector3 in
              let dx = cos(angle), dz = sin(angle)
              let tx = abs(dx) > 0.00001 ? halfWidth / abs(dx) : Float.greatestFiniteMagnitude
              let tz = abs(dz) > 0.00001 ? halfDepth / abs(dz) : Float.greatestFiniteMagnitude
-             let t = min(tx, tz)
-             return SCNVector3(t * dx, y, t * dz)
+             let distance = min(tx, tz)
+             return SCNVector3(distance * dx, -length / 2, distance * dz)
          }
+         let circle = angles.map { angle in
+             SCNVector3(outletRadius * cos(angle), length / 2,
+                        outletRadius * sin(angle))
+         }
+         return [rectangle, circle]
      }
 
      private func buildScene() -> SCNScene {
@@ -1267,10 +1291,9 @@ private struct FabReadOnly3DPreview: View {
              let halfWidth = max(Float(m(fitting.inletWidth)) / 2, 0.0005)
              let halfDepth = max(Float(m(fitting.inletHeight)) / 2, 0.0005)
              let outletRadius = max(Float(m(fitting.outletWidth)) / 2, 0.0005)
-             body.addChildNode(SCNNode(geometry: mesh(rings: [
-                 rectangularRing(halfWidth: halfWidth, halfDepth: halfDepth, y: -length / 2),
-                 circularRing(radius: outletRadius, y: length / 2)
-             ])))
+             let rings = squareRoundRings(halfWidth: halfWidth, halfDepth: halfDepth,
+                                         outletRadius: outletRadius, length: length)
+             body.addChildNode(SCNNode(geometry: mesh(rings: rings)))
              let reach = max(halfWidth, halfDepth, outletRadius)
              addLabel("A  " + dimension(fitting.inletWidth),
                       at: SCNVector3(0, -length/2, halfDepth + labelOffset/2),
