@@ -1570,83 +1570,89 @@ private struct FabReadOnly3DPreview: View {
              body.addChildNode(SCNNode(geometry: geo))
              addLabel("A  " + dimension(fitting.length), at: SCNVector3(radius+labelOffset, 0, 0), to: body, scale: labelSize)
              addLabel("B  " + dimension(fitting.inletWidth), at: SCNVector3(0, -length/2, radius+labelOffset/2), to: body, scale: labelSize)
-         case .squareRound:
-             // Matched contour stations give an untwisted open square-to-round loft.
-             let length = max(Float(m(fitting.length)), 0.001)
-             let halfWidth = max(Float(m(fitting.inletWidth)) / 2, 0.0005)
-             let halfDepth = max(Float(m(fitting.inletHeight)) / 2, 0.0005)
-             let outletRadius = max(Float(m(fitting.outletWidth)) / 2, 0.0005)
-             let rings = squareRoundRings(halfWidth: halfWidth, halfDepth: halfDepth,
-                                         outletRadius: outletRadius, length: length)
-             body.addChildNode(SCNNode(geometry: mesh(rings: rings)))
-             let reach = max(halfWidth, halfDepth, outletRadius)
-             addLabel("A  " + dimension(fitting.inletWidth),
-                      at: SCNVector3(0, -length/2, halfDepth + labelOffset/2),
-                      to: body, scale: labelSize)
-             addLabel("B  " + dimension(fitting.inletHeight),
-                      at: SCNVector3(halfWidth + labelOffset/2, -length/2, 0),
-                      to: body, scale: labelSize)
-             addLabel("C  Ø " + dimension(fitting.outletWidth),
-                      at: SCNVector3(0, length/2, outletRadius + labelOffset/2),
-                      to: body, scale: labelSize)
-             addLabel("D  " + dimension(fitting.length),
-                      at: SCNVector3(reach + labelOffset, 0, 0),
-                      to: body, scale: labelSize)
-         case .roundHeto90, .roundHeto45:
-             // The rectangular opening is the mounting mouth. The round
-             // outlet turns through 90 or 45 degrees relative to that mouth.
-             let a = max(Float(m(fitting.inletWidth)), 0.001)
-             let b = max(Float(m(fitting.inletHeight)), 0.001)
-             let c = max(Float(m(fitting.outletWidth)), 0.001)
-             let outletRadius = c/2
-             let turn = fitting.shape == .roundHeto90 ? Float.pi/2 : Float.pi/4
-             // "Standard" is a fitting-shop sizing mode, not an explicit
-             // entered dimension; use a proportional illustrative length.
-             let standardLength = max(a, max(b, c)) * 1.1
-             let centerlineLength = fitting.hetoMode == .custom
-                 ? max(Float(m(fitting.length)), 0.001) : standardLength
-             let rings = hetoRings(rectWidth: a, rectDepth: b,
-                                   roundRadius: outletRadius,
-                                   centerlineLength: centerlineLength,
-                                   radians: turn)
-             body.addChildNode(SCNNode(geometry: mesh(rings: rings)))
-             let centerRadius = centerlineLength / turn
-             let exitX = centerRadius * (1 - cos(turn))
-             let exitY = centerRadius * sin(turn)
-             if fitting.isDampered {
-                 // A thin blade inside the round outlet indicates the selected
-                 // damper; shafts, seals, and specific hardware are intentionally
-                 // not modelled in this visual-only pass.
-                 let blade = SCNCylinder(radius: CGFloat(outletRadius * 0.88),
-                                         height: CGFloat(max(outletRadius * 0.035, 0.0015)))
-                 let bladeMaterial = SCNMaterial()
-                 bladeMaterial.diffuse.contents = UIColor(red: 0.46, green: 0.51, blue: 0.55, alpha: 1)
-                 bladeMaterial.metalness.contents = 0.75
-                 bladeMaterial.roughness.contents = 0.4
-                 bladeMaterial.isDoubleSided = true
-                 blade.materials = [bladeMaterial]
-                 let bladeNode = SCNNode(geometry: blade)
-                 bladeNode.position = SCNVector3(exitX - sin(turn)*outletRadius*0.18,
-                                                 exitY - cos(turn)*outletRadius*0.18, 0)
-                 bladeNode.eulerAngles.z = -turn
+         case .squareRound, .roundHeto90, .roundHeto45:
+             // CAD references: a square/rectangular mounting mouth, angular
+             // bump-braked transition body, and a separate 4" rolled collar.
+             // HETO 90 is an eccentric takeoff with an upright collar; 45 HETO
+             // tilts the collar and its attachment mouth by 45 degrees.
+             let a=max(Float(m(fitting.inletWidth)), 0.001)
+             let b=max(Float(m(fitting.inletHeight)), 0.001)
+             let c=max(Float(m(fitting.outletWidth)), 0.001)
+             let r=c/2
+             let collar=Float(m(4))
+             let heto=fitting.shape.isHeto
+             let angled=fitting.shape == .roundHeto45
+             let tilt=angled ? Float.pi/4 : Float(0)
+             let baseHalf=a/2
+             let shiftX=heto ? max(0, baseHalf-r*0.7) : Float(0)
+             // Custom D is total height from rectangular mouth to highest
+             // round-collar edge, NOT the transition-only developed length.
+             let collarVertical=collar*cos(tilt) + r*abs(sin(tilt))
+             let defaultTotal=max(a,max(b,c))*0.9 + collarVertical
+             let requested=heto && fitting.hetoMode == .standard
+                 ? defaultTotal : Float(m(fitting.length))
+             let total=max(requested,collarVertical+0.004)
+             let bodyHeight=max(total-collarVertical,0.004)
+             let bottom=-total/2
+             let shoulder=bottom+bodyHeight
+             let rings=formedTransitionRings(halfWidth:a/2, halfDepth:b/2,
+                                              outletRadius:r, bottom:bottom,
+                                              shoulder:shoulder, outletShiftX:shiftX,
+                                              tilt:tilt)
+             body.addChildNode(SCNNode(geometry: panelMesh(rings:rings)))
+             let endRing=collarExit(for:rings[1],length:collar,tilt:tilt)
+             body.addChildNode(SCNNode(geometry: mesh(rings:[rings[1],endRing])))
+             // A shallow rectangular return around the mounting mouth. It
+             // remains a connected visual sheet, not a second duct fitting.
+             let lip=Float(m(0.375))
+             let outerRing=formedTransitionRings(halfWidth:a/2+lip,
+                                                  halfDepth:b/2+lip,
+                                                  outletRadius:r,
+                                                  bottom:bottom,shoulder:shoulder,
+                                                  outletShiftX:shiftX,tilt:tilt)[0]
+             body.addChildNode(SCNNode(geometry: panelMesh(rings:[rings[0],outerRing])))
+             if heto && fitting.isDampered {
+                 let blade=SCNCylinder(radius: CGFloat(r*0.9),
+                                      height: CGFloat(max(r*0.025,0.001)))
+                 let bladeMaterial=SCNMaterial()
+                 bladeMaterial.diffuse.contents=UIColor.darkGray
+                 bladeMaterial.metalness.contents=0.8
+                 bladeMaterial.isDoubleSided=true
+                 blade.materials=[bladeMaterial]
+                 let bladeNode=SCNNode(geometry:blade)
+                 let p=endRing[0]
+                 bladeNode.position=SCNVector3(shiftX+collar*0.5*sin(tilt),
+                                               shoulder+collar*0.5*cos(tilt),0)
+                 bladeNode.eulerAngles.z = -tilt
                  body.addChildNode(bladeNode)
+                 _ = p
              }
-             addLabel("A  " + dimension(fitting.inletWidth),
-                      at: SCNVector3(0, 0, b/2 + labelOffset/2),
-                      to: body, scale: labelSize)
-             addLabel("B  " + dimension(fitting.inletHeight),
-                      at: SCNVector3(a/2 + labelOffset/2, 0, 0),
-                      to: body, scale: labelSize)
-             addLabel("C  Ø " + dimension(fitting.outletWidth),
-                      at: SCNVector3(exitX + outletRadius*cos(turn) + labelOffset/2,
-                                     exitY + outletRadius*sin(turn), 0),
-                      to: body, scale: labelSize)
-             let lengthLabel = fitting.hetoMode == .custom
-                 ? dimension(fitting.length) : "STANDARD"
-             addLabel("D  " + lengthLabel,
-                      at: SCNVector3(exitX/2 + labelOffset,
-                                     exitY/2 + labelOffset/2, -b/2),
-                      to: body, scale: labelSize)
+             let dimensionDistance=max(Float(m(1)),max(a,b)*0.13)
+             addDimension("A  "+dimension(fitting.inletWidth),
+                          from:SCNVector3(-a/2,bottom,b/2),
+                          to:SCNVector3(a/2,bottom,b/2),
+                          offset:SCNVector3(0,0,dimensionDistance),
+                          root:body,size:labelSize*0.85)
+             addDimension("B  "+dimension(fitting.inletHeight),
+                          from:SCNVector3(a/2,bottom,-b/2),
+                          to:SCNVector3(a/2,bottom,b/2),
+                          offset:SCNVector3(dimensionDistance,0,0),
+                          root:body,size:labelSize*0.85)
+             let centerX=shiftX+collar*sin(tilt)
+             let centerY=shoulder+collar*cos(tilt)
+             let cross=SCNVector3(r*cos(tilt),-r*sin(tilt),0)
+             addDimension("C  Ø "+dimension(fitting.outletWidth),
+                          from:SCNVector3(centerX-cross.x,centerY-cross.y,0),
+                          to:SCNVector3(centerX+cross.x,centerY+cross.y,0),
+                          offset:SCNVector3(0,0,r+dimensionDistance),
+                          root:body,size:labelSize*0.85)
+             let lengthLabel=heto && fitting.hetoMode == .standard
+                 ? "D  STANDARD" : "D  "+dimension(fitting.length)
+             addDimension(lengthLabel,
+                          from:SCNVector3(a/2,bottom,0),
+                          to:SCNVector3(a/2,bottom+total,0),
+                          offset:SCNVector3(max(0,shiftX)+r+dimensionDistance,0,0),
+                          root:body,size:labelSize*0.85)
          case .roundReducer, .roundEccentric:
              let inletCollar = max(Float(m(fitting.reducerInletCollarLength)), 0.001)
              let bodyLength = max(Float(m(fitting.effectiveReducerBodyLength)), 0.001)
