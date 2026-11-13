@@ -71,9 +71,9 @@ enum FabPDFExporter {
         let title = f.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? f.shape.displayName : f.name
         drawText("ITEM \(index)  ·  \(title)", x: leftX, y: rect.minY + 7, w: 250, size: 10, bold: true)
         drawText(f.shape.displayName + "  ·  " + (area?.name ?? "Job Root"), x: leftX, y: rect.minY + 23, w: 248, size: 8, color: .darkGray)
-        if f.shape.isCatalogRect {
+        if f.shape.isCatalogRect || f.shape.isCatalogRound {
             let images = FabDiagramArt.images(for: f)
-            drawText(f.shape == .rectTransition ? "LIVE TRANSITION VIEWS" : "APPROVED FITTING REFERENCE",
+            drawText(f.shape == .rectTransition ? "LIVE TRANSITION VIEWS" : "FITTING REFERENCE DRAWING",
                      x: leftX + 2, y: rect.minY + 39, w: 260, size: 7,
                      bold: true, color: .darkGray, align: .center)
             let imageBox = CGRect(x: leftX + 5, y: rect.minY + 51, width: 248, height: 82)
@@ -102,8 +102,8 @@ enum FabPDFExporter {
         let w: CGFloat = 270
         var y = rect.minY + 8
         drawText("QTY  \(f.quantity)", x: x, y: y, w: 80, size: 10, bold: true)
-        drawText(f.shape.isCustom ? "SPECIAL REQUEST" : (f.isRound ? "ROUND" : "RECTANGULAR"),
-                 x: x + 87, y: y, w: w - 87, size: 9, bold: true, color: .darkGray)
+        let spec = f.effectiveMaterial(in: area).rawValue.uppercased() + "  /  " + f.effectiveGaugeLabel(in: area).uppercased()
+        drawText(spec, x: x + 65, y: y, w: w - 65, size: 8.0, bold: true, color: .darkGray, align: .right)
         y += 19
         var details: [String] = []
         if f.shape.isCatalogRect {
@@ -143,6 +143,7 @@ enum FabPDFExporter {
                 } else if f.shape == .rectTransition {
                     details.append("LENGTH \(fabInches(f.length)) · STR IN/OUT \(fabInches(f.straightIn))/\(fabInches(f.straightOut))")
                     details.append("LEFT \(fabInches(f.transitionLeft)) · RIGHT \(fabInches(f.transitionRight))")
+                    details.append("VERTICAL EDGE SHIFT (+ UP / - DOWN)")
                     details.append("TOP \(fabInches(f.transitionTop)) · BOTTOM \(fabInches(f.transitionBottom))")
                 } else {
                     details.append("E LENGTH \(fabInches(f.length))")
@@ -150,6 +151,41 @@ enum FabPDFExporter {
                 details.append("CONN IN \(f.inletLabel()) / OUT \(f.outletLabel())")
             }
             details.append("LINER \(f.effectiveLiner(in: area).rawValue)")
+        } else if f.shape.isCatalogRound {
+            switch f.shape {
+            case .roundElbow45, .roundElbow90:
+                details.append("A DIAMETER (BOTH ENDS) \(fabInches(f.inletWidth))")
+                details.append("B ANGLE \(String(format: "%g", f.angle))°  ·  \(f.fabricationType.rawValue.uppercased())")
+                details.append("RADIUS FACTOR \(f.radiusFactor.displayName)")
+                details.append("CONN IN \(f.inletLabel()) / OUT \(f.outletLabel())")
+            case .roundReducer:
+                details.append("A DIA IN \(fabInches(f.inletWidth)) · B DIA OUT \(fabInches(f.outletWidth))")
+                details.append("INLET COLLAR \(fabInches(f.reducerInletCollarLength)) (\(f.reducerInletMode.rawValue.uppercased()))")
+                details.append("CENTER BODY \(fabInches(f.effectiveReducerBodyLength))")
+                details.append("OUTLET COLLAR \(fabInches(f.reducerOutletCollarLength)) (\(f.reducerOutletMode.rawValue.uppercased()))")
+                details.append("C OVERALL LENGTH \(fabInches(f.reducerOverallLength)) · \(f.reducerMode.rawValue.uppercased())")
+                if f.reducerMode == .flatTop {
+                    details.append("FLAT TOP OFFSET \(fabInches(Swift.abs(f.outletWidth - f.inletWidth) / 2))")
+                }
+                details.append("CONN IN \(f.inletLabel()) / OUT \(f.outletLabel())")
+            case .roundHeto90, .roundHeto45:
+                details.append("A×B RECT \(fabInches(f.inletWidth)) × \(fabInches(f.inletHeight))")
+                details.append("C ROUND DIA \(fabInches(f.outletWidth))")
+                details.append("D LENGTH \(f.needsCustomLength ? fabInches(f.length) : "STANDARD")")
+                details.append("RECT CONN \(f.inletLabel())")
+                details.append("ROUND CONN \(f.outletLabel())")
+                details.append("DAMPER \(f.isDampered ? "YES" : "NO")")
+            case .roundSpiral:
+                details.append("A PIPE LENGTH \(fabInches(f.length))")
+                details.append("B DIAMETER (BOTH ENDS) \(fabInches(f.inletWidth))")
+                details.append("CONN IN \(f.inletLabel()) / OUT \(f.outletLabel())")
+            case .roundEndCap:
+                details.append("A DIAMETER \(fabInches(f.inletWidth))")
+                details.append("OPEN END CONN \(f.inletLabel())")
+            default: break
+            }
+            let insulation = f.effectiveRoundInsulation(in: area)
+            details.append("INSUL " + (insulation == .none ? "None" : "\(insulation.rawValue) \(f.effectiveRoundThickness(in: area).rawValue)"))
         } else if !f.shape.isCustom {
             if f.isRound {
                 let diaOut = f.shape.isRoundElbow || f.shape == .roundStraight ? f.inletWidth : f.outletWidth
@@ -364,6 +400,14 @@ enum FabDiagramArt {
         case .rectTee: names = ["FabRectTee"]
         case .squareRound: names = ["FabSquareRoundEnd", "FabSquareRoundSide"]
         case .rectEndCap: names = ["FabRectEndCap"]
+        case .roundElbow90, .roundElbow45: names = ["FabRoundElbow"]
+        case .roundReducer:
+            names = f.reducerMode == .flatTop ? ["FabRoundReducerFront", "FabRoundReducerFlatTop"] :
+                ["FabRoundReducerFront", "FabRoundReducerSide"]
+        case .roundHeto90: names = ["FabRoundHeto90Top", "FabRoundHeto90Side"]
+        case .roundHeto45: names = ["FabRoundHeto45Top", "FabRoundHeto45Side"]
+        case .roundSpiral: names = ["FabRoundSpiral"]
+        case .roundEndCap: names = ["FabRoundCapFace", "FabRoundCapSide"]
         default: names = []
         }
         return names.compactMap { UIImage(named: $0) }
