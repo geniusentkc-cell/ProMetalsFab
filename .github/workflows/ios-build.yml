@@ -3,6 +3,9 @@ name: ProMetalsFab iOS Build
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/v4-round-library
 
 jobs:
   build:
