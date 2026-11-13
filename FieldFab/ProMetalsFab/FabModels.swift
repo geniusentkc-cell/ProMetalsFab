@@ -235,6 +235,13 @@ struct FabFitting: Codable, Identifiable, Equatable {
     var elbowRadiusFactor: FabRadiusFactor? = nil
     var elbowAngleCustom: Bool? = nil
     var reducerAlignment: FabReducerAlignment? = nil
+    // Independent reducer lengths. Optional fields preserve old saved jobs:
+    // legacy C overall length is split into two 4-inch collars and the body.
+    var reducerInletCollarMode: FabHetoLengthMode? = nil
+    var reducerOutletCollarMode: FabHetoLengthMode? = nil
+    var reducerInletCollarCustomLength: Double? = nil
+    var reducerOutletCollarCustomLength: Double? = nil
+    var reducerBodyLength: Double? = nil
     var hetoLengthMode: FabHetoLengthMode? = nil
     var notes: String = ""
 
@@ -252,6 +259,27 @@ struct FabFitting: Codable, Identifiable, Equatable {
     var radiusFactor: FabRadiusFactor { elbowRadiusFactor ?? .onePointFive }
     var angleIsCustom: Bool { elbowAngleCustom ?? false }
     var reducerMode: FabReducerAlignment { reducerAlignment ?? .centerline }
+    static let standardReducerCollarLength: Double = 4
+    var reducerInletMode: FabHetoLengthMode { reducerInletCollarMode ?? .standard }
+    var reducerOutletMode: FabHetoLengthMode { reducerOutletCollarMode ?? .standard }
+    var reducerInletCollarLength: Double {
+        reducerInletMode == .standard ? Self.standardReducerCollarLength :
+            (reducerInletCollarCustomLength ?? Self.standardReducerCollarLength)
+    }
+    var reducerOutletCollarLength: Double {
+        reducerOutletMode == .standard ? Self.standardReducerCollarLength :
+            (reducerOutletCollarCustomLength ?? Self.standardReducerCollarLength)
+    }
+    var effectiveReducerBodyLength: Double {
+        reducerBodyLength ?? max(0, length - 2 * Self.standardReducerCollarLength)
+    }
+    var reducerOverallLength: Double {
+        reducerInletCollarLength + effectiveReducerBodyLength + reducerOutletCollarLength
+    }
+    // Retain the legacy 'length' value for old clients and schematic exports.
+    mutating func syncReducerOverallLength() {
+        length = reducerOverallLength
+    }
     var hetoMode: FabHetoLengthMode { hetoLengthMode ?? .standard }
     var needsCustomLength: Bool { shape.isHeto && hetoMode == .custom }
     var effectiveOutletHeight: Double {
@@ -382,6 +410,12 @@ struct FabFitting: Codable, Identifiable, Equatable {
             return "Length must be greater than zero."
         }
         if shape.isHeto && needsCustomLength && length <= 0 { return "Custom HETO length must be greater than zero." }
+        if shape.isRoundReducer {
+            guard [reducerInletCollarLength, reducerOutletCollarLength, effectiveReducerBodyLength]
+                    .allSatisfy({ $0.isFinite && $0 > 0 }) else {
+                return "Reducer inlet collar, center body, and outlet collar must each have a positive length."
+            }
+        }
         if shape.isHeto && inletHeight <= 0 { return "HETO depth must be greater than zero." }
         if shape.isRoundElbow && (angle <= 0 || angle > 180) { return "Enter an elbow angle greater than 0° and at most 180°." }
         if shape == .rectRadiusElbow && radius <= 0 { return "Inside radius must be greater than zero." }
@@ -457,7 +491,13 @@ struct FabFitting: Codable, Identifiable, Equatable {
             fitting.length = 60
         }
         if shape.isRoundEndCap { fitting.inletWidth = 12; fitting.inletConnection = .raw }
-        if shape.isRoundReducer { fitting.reducerAlignment = .centerline }
+        if shape.isRoundReducer {
+            fitting.reducerAlignment = .centerline
+            fitting.reducerInletCollarMode = .standard
+            fitting.reducerOutletCollarMode = .standard
+            fitting.reducerBodyLength = 16
+            fitting.syncReducerOverallLength()
+        }
         if shape.isRoundElbow {
             fitting.outletWidth = fitting.inletWidth; fitting.outletHeight = fitting.inletHeight
             fitting.elbowRadiusFactor = .onePointFive
