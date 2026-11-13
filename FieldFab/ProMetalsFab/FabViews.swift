@@ -457,6 +457,36 @@ struct FabFittingEditor: View {
     private var reducerAlignmentSelection: Binding<FabReducerAlignment> {
         Binding(get: { fitting.reducerMode }, set: { fitting.reducerAlignment = $0 })
     }
+    private var reducerInletCollarSelection: Binding<FabHetoLengthMode> {
+        Binding(get: { fitting.reducerInletMode }, set: {
+            fitting.reducerInletCollarMode = $0
+            fitting.syncReducerOverallLength()
+        })
+    }
+    private var reducerOutletCollarSelection: Binding<FabHetoLengthMode> {
+        Binding(get: { fitting.reducerOutletMode }, set: {
+            fitting.reducerOutletCollarMode = $0
+            fitting.syncReducerOverallLength()
+        })
+    }
+    private var reducerInletCustomLength: Binding<Double> {
+        Binding(get: { fitting.reducerInletCollarCustomLength ?? 4 }, set: {
+            fitting.reducerInletCollarCustomLength = $0
+            fitting.syncReducerOverallLength()
+        })
+    }
+    private var reducerOutletCustomLength: Binding<Double> {
+        Binding(get: { fitting.reducerOutletCollarCustomLength ?? 4 }, set: {
+            fitting.reducerOutletCollarCustomLength = $0
+            fitting.syncReducerOverallLength()
+        })
+    }
+    private var reducerCenterBodyLength: Binding<Double> {
+        Binding(get: { fitting.effectiveReducerBodyLength }, set: {
+            fitting.reducerBodyLength = $0
+            fitting.syncReducerOverallLength()
+        })
+    }
     private var hetoLengthSelection: Binding<FabHetoLengthMode> {
         Binding(get: { fitting.hetoMode }, set: { fitting.hetoLengthMode = $0 })
     }
@@ -568,7 +598,31 @@ Section("Dimensions — Finished Inches") {
         } else if fitting.shape.isRoundReducer {
             number("A — Diameter In", diameterInput)
             number("B — Diameter Out", $fitting.outletWidth)
-            number("C — Length", $fitting.length)
+            Picker("Inlet Collar Length", selection: reducerInletCollarSelection) {
+                Text("Standard — 4″").tag(FabHetoLengthMode.standard)
+                Text("Custom").tag(FabHetoLengthMode.custom)
+            }
+            if fitting.reducerInletMode == .custom {
+                number("Inlet Collar — Custom Length", reducerInletCustomLength)
+            }
+            Picker("Outlet Collar Length", selection: reducerOutletCollarSelection) {
+                Text("Standard — 4″").tag(FabHetoLengthMode.standard)
+                Text("Custom").tag(FabHetoLengthMode.custom)
+            }
+            if fitting.reducerOutletMode == .custom {
+                number("Outlet Collar — Custom Length", reducerOutletCustomLength)
+            }
+            number("Center Body Length", reducerCenterBodyLength)
+            HStack {
+                Text("C — Overall Length")
+                Spacer()
+                Text(fabInches(fitting.reducerOverallLength))
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+            }
+            Text("Overall = inlet collar + center body + outlet collar.")
+                .font(.caption)
+                .foregroundColor(.secondary)
             Picker("Offset", selection: reducerAlignmentSelection) {
                 ForEach(FabReducerAlignment.allCases) { Text($0.rawValue).tag($0) }
             }
@@ -1483,17 +1537,33 @@ private struct FabReadOnly3DPreview: View {
                                      exitY/2 + labelOffset/2, -b/2),
                       to: body, scale: labelSize)
          case .roundReducer, .roundEccentric:
-             let length = max(Float(m(fitting.length)), 0.001)
+             let inletCollar = max(Float(m(fitting.reducerInletCollarLength)), 0.001)
+             let bodyLength = max(Float(m(fitting.effectiveReducerBodyLength)), 0.001)
+             let outletCollar = max(Float(m(fitting.reducerOutletCollarLength)), 0.001)
+             let length = inletCollar + bodyLength + outletCollar
              let outRadius = max(Float(m(fitting.outletWidth))/2, 0.0005)
-             // Flat-top eccentric reducers align the uppermost Z edges.
-             let shiftZ = (fitting.reducerMode == .flatTop || fitting.shape == .roundEccentric) ? radius-outRadius : 0
+             // On flat-top reducers, align the uppermost Z edges at each end.
+             let shiftZ = (fitting.reducerMode == .flatTop || fitting.shape == .roundEccentric)
+                 ? radius-outRadius : 0
+             let start = -length/2
+             let bodyStart = start + inletCollar
+             let bodyEnd = bodyStart + bodyLength
+             let finish = bodyEnd + outletCollar
              body.addChildNode(SCNNode(geometry: mesh(rings: [
-                 circularRing(radius: radius, y: -length/2),
-                 circularRing(radius: outRadius, y: length/2, shiftZ: shiftZ)
+                 circularRing(radius: radius, y: start),
+                 circularRing(radius: radius, y: bodyStart),
+                 circularRing(radius: outRadius, y: bodyEnd, shiftZ: shiftZ),
+                 circularRing(radius: outRadius, y: finish, shiftZ: shiftZ)
              ])))
-             addLabel("A  " + dimension(fitting.inletWidth), at: SCNVector3(0, -length/2, radius+labelOffset/2), to: body, scale: labelSize)
-             addLabel("B  " + dimension(fitting.outletWidth), at: SCNVector3(0, length/2, outRadius+shiftZ+labelOffset/2), to: body, scale: labelSize)
-             addLabel("C  " + dimension(fitting.length), at: SCNVector3(radius+labelOffset, 0, 0), to: body, scale: labelSize)
+             addLabel("A  " + dimension(fitting.inletWidth),
+                      at: SCNVector3(0, start, radius+labelOffset/2),
+                      to: body, scale: labelSize)
+             addLabel("B  " + dimension(fitting.outletWidth),
+                      at: SCNVector3(0, finish, outRadius+shiftZ+labelOffset/2),
+                      to: body, scale: labelSize)
+             addLabel("C  " + dimension(fitting.reducerOverallLength),
+                      at: SCNVector3(radius+labelOffset, 0, 0),
+                      to: body, scale: labelSize)
          case .rectEndCap:
              // Closed front face, single open rectangular connection at the rear.
              // The shallow illustrative rim is not a user-entered dimension.
