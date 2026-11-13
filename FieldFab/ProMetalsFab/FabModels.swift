@@ -231,6 +231,8 @@ struct FabFitting: Codable, Identifiable, Equatable {
     var materialOverride: FabMaterial? = nil
     var gaugeOverride: FabGauge? = nil
     var customGaugeOverride: String? = nil
+    // Nil preserves saved jobs created before the vane selector existed.
+    var showTurningVanes: Bool? = nil
     var elbowFabrication: FabElbowFabrication? = nil
     var elbowRadiusFactor: FabRadiusFactor? = nil
     var elbowAngleCustom: Bool? = nil
@@ -256,6 +258,9 @@ struct FabFitting: Codable, Identifiable, Equatable {
         return selection.rawValue + " GA"
     }
     var fabricationType: FabElbowFabrication { elbowFabrication ?? .fabricated }
+    var hasTurningVanes: Bool {
+        showTurningVanes ?? (shape == .rectElbow90 || shape == .rectTee)
+    }
     var radiusFactor: FabRadiusFactor { elbowRadiusFactor ?? .onePointFive }
     var angleIsCustom: Bool { elbowAngleCustom ?? false }
     var reducerMode: FabReducerAlignment { reducerAlignment ?? .centerline }
@@ -470,11 +475,13 @@ struct FabFitting: Codable, Identifiable, Equatable {
             fitting.outletWidth = fitting.inletWidth; fitting.outletHeight = fitting.inletHeight
         }
         if shape.isRectElbow {
+            fitting.showTurningVanes = shape == .rectElbow90
             fitting.straightIn = 6; fitting.straightOut = 6
             fitting.outletWidth = fitting.inletWidth; fitting.outletHeight = fitting.inletHeight
         }
         if shape == .rectRadiusElbow { fitting.radius = 12; fitting.verticalAlignment = .centerShift }
         if shape == .rectTee {
+            fitting.showTurningVanes = true
             fitting.teeRightWidth = 18; fitting.teeRightDepth = 12
             fitting.teeThroatG = 6; fitting.teeThroatH = 6
             fitting.teeThroatI = 6; fitting.teeThroatJ = 6
