@@ -1436,21 +1436,34 @@ private struct FabReadOnly3DPreview: View {
          return angles
      }
 
-     private func squareRoundRings(halfWidth: Float, halfDepth: Float,
-                                   outletRadius: Float, length: Float) -> [[SCNVector3]] {
+     // Shop-shaped square/rectangular mounting mouth to a round outlet.
+     // The angular stations are shared at both ends so corners remain exact,
+     // while the flat-shaded sheet-metal panels read as bump-brake facets.
+     private func formedTransitionRings(halfWidth: Float, halfDepth: Float,
+                                        outletRadius: Float, bottom: Float, shoulder: Float,
+                                        outletShiftX: Float = 0,
+                                        tilt: Float = 0) -> [[SCNVector3]] {
          let angles = squareRoundAngles(halfWidth: halfWidth, halfDepth: halfDepth)
-         let rectangle = angles.map { angle -> SCNVector3 in
-             let dx = cos(angle), dz = sin(angle)
-             let tx = abs(dx) > 0.00001 ? halfWidth / abs(dx) : Float.greatestFiniteMagnitude
-             let tz = abs(dz) > 0.00001 ? halfDepth / abs(dz) : Float.greatestFiniteMagnitude
-             let distance = min(tx, tz)
-             return SCNVector3(distance * dx, -length / 2, distance * dz)
+         let rectangle = angles.map { phi -> SCNVector3 in
+             let x=cos(phi), z=sin(phi)
+             let rx=abs(x)>0.00001 ? halfWidth/abs(x) : Float.greatestFiniteMagnitude
+             let rz=abs(z)>0.00001 ? halfDepth/abs(z) : Float.greatestFiniteMagnitude
+             let r=min(rx,rz)
+             return SCNVector3(r*x, bottom, r*z)
          }
-         let circle = angles.map { angle in
-             SCNVector3(outletRadius * cos(angle), length / 2,
-                        outletRadius * sin(angle))
+         let round = angles.map { phi -> SCNVector3 in
+             let radial=outletRadius*cos(phi)
+             return SCNVector3(outletShiftX + radial*cos(tilt),
+                               shoulder - radial*sin(tilt),
+                               outletRadius*sin(phi))
          }
-         return [rectangle, circle]
+         return [rectangle,round]
+     }
+     private func collarExit(for ring: [SCNVector3], length: Float,
+                             tilt: Float = 0) -> [SCNVector3] {
+         ring.map { p in
+             SCNVector3(p.x + length*sin(tilt), p.y + length*cos(tilt), p.z)
+         }
      }
 
      // Four real corners for rectangular duct ends; no cosmetic crease lines.
@@ -1481,35 +1494,6 @@ private struct FabReadOnly3DPreview: View {
          let d = max(depth, 0.001) / 2
          return [SCNVector3(x, centerY+w, d), SCNVector3(x, centerY-w, d),
                  SCNVector3(x, centerY-w, -d), SCNVector3(x, centerY+w, -d)]
-     }
-
-     // High-efficiency takeoff: an open rectangular mounting mouth lofts to
-     // an open circular mouth while its centerline turns through 45 or 90 deg.
-     // This is a visual guide, not a developed cut-pattern calculation.
-     private func hetoRings(rectWidth: Float, rectDepth: Float,
-                            roundRadius: Float, centerlineLength: Float,
-                            radians: Float) -> [[SCNVector3]] {
-         let w = max(rectWidth, 0.001) / 2
-         let d = max(rectDepth, 0.001) / 2
-         let angles = squareRoundAngles(halfWidth: w, halfDepth: d)
-         let bendRadius = centerlineLength / max(radians, 0.01)
-         let sections = 20
-         return (0...sections).map { step -> [SCNVector3] in
-             let t = Float(step) / Float(sections)
-             let theta = radians * t
-             let cx = bendRadius * (1 - cos(theta))
-             let cy = bendRadius * sin(theta)
-             return angles.map { phi in
-                 let dx = cos(phi), dz = sin(phi)
-                 let tx = abs(dx) > 0.00001 ? w / abs(dx) : Float.greatestFiniteMagnitude
-                 let tz = abs(dz) > 0.00001 ? d / abs(dz) : Float.greatestFiniteMagnitude
-                 let r = min(tx, tz)
-                 let across = (1 - t) * r * dx + t * roundRadius * dx
-                 let alongDepth = (1 - t) * r * dz + t * roundRadius * dz
-                 return SCNVector3(cx + across * cos(theta),
-                                   cy - across * sin(theta), alongDepth)
-             }
-         }
      }
 
      // The tee is assembled from three open rectangular sleeves. The central
