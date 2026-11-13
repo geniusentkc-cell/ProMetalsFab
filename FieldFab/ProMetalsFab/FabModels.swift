@@ -278,6 +278,11 @@ struct FabFitting: Codable, Identifiable, Equatable {
     }
     // Retain the legacy 'length' value for old clients and schematic exports.
     mutating func syncReducerOverallLength() {
+        // Materialize the old C-derived body length before changing C. Without
+        // this, updating a collar on a legacy job could change its body length.
+        if reducerBodyLength == nil {
+            reducerBodyLength = effectiveReducerBodyLength
+        }
         length = reducerOverallLength
     }
     var hetoMode: FabHetoLengthMode { hetoLengthMode ?? .standard }
@@ -343,6 +348,7 @@ struct FabFitting: Codable, Identifiable, Equatable {
     }
     var dimensionLegend: String {
         if shape.isCustom { return "Describe custom fitting in Notes" }
+        if shape.isRoundReducer { return "A Diameter In · B Diameter Out · C Overall Length" }
         if shape.isRoundElbow { return "A Diameter (both ends) · B Elbow Angle" }
         if shape.isRoundReducer { return "A Diameter In · B Diameter Out · C Length" }
         if shape.isHeto { return "A × B Rectangular Opening · C Round Diameter · D Length" }
