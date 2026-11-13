@@ -505,6 +505,10 @@ struct FabFittingEditor: View {
     private var damper: Binding<Bool> {
         Binding(get: { fitting.isDampered }, set: { fitting.hasDamper = $0 })
     }
+    private var turningVanes: Binding<Bool> {
+        Binding(get: { fitting.hasTurningVanes },
+                set: { fitting.showTurningVanes = $0 })
+    }
     private var diameterInput: Binding<Double> {
         Binding(get: { fitting.inletWidth }, set: { newValue in
             fitting.inletWidth = newValue
@@ -686,13 +690,25 @@ Section("Dimensions — Finished Inches") {
             number("H — Lower Left Throat", teeH)
             number("I — Lower Right Throat", teeI)
             number("J — Upper Right Throat", teeJ)
+            Picker("Turning Vanes", selection: turningVanes) {
+                Text("Vanes").tag(true)
+                Text("No Vanes").tag(false)
+            }
         } else {
             number("C — Width Out", $fitting.outletWidth)
             number("D — Depth Out", $fitting.outletHeight)
             if isSquareElbow {
                 number("E — Throat Length 1", $fitting.straightIn)
                 number("F — Throat Length 2", $fitting.straightOut)
+                Picker("Turning Vanes", selection: turningVanes) {
+                    Text("Vanes").tag(true)
+                    Text("No Vanes").tag(false)
+                }
             } else if fitting.shape == .rectRadiusElbow {
+                Picker("Turning Vanes", selection: turningVanes) {
+                    Text("Vanes").tag(true)
+                    Text("No Vanes").tag(false)
+                }
                 number("E — Full Interior Radius", $fitting.radius)
                 number("F — Top Shift (+up / -down)", $fitting.verticalValue)
                 Text("Top and bottom shift together. Specify flat top/bottom in Notes.")
