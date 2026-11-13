@@ -1114,6 +1114,34 @@ private struct FabReadOnly3DPreview: View {
          var initialCameraTarget = SCNVector3Zero
      }
 
+     // Billboard anchors face the viewer, while their text rotates *within*
+     // the screen plane to follow the projected measurement direction.
+     final class Coordinator: NSObject, SCNSceneRendererDelegate {
+         func renderer(_ renderer: any SCNSceneRenderer, updateAtTime time: TimeInterval) {
+             guard let view = renderer as? SCNView,
+                   let camera = view.pointOfView,
+                   let scene = view.scene else { return }
+             scene.rootNode.enumerateChildNodes { node, _ in
+                 guard node.name == "roundDimensionLabel",
+                       let data = node.userData,
+                       let x = data["dx"] as? NSNumber,
+                       let y = data["dy"] as? NSNumber,
+                       let z = data["dz"] as? NSNumber,
+                       let text = node.childNode(withName: "dimensionText", recursively: false) else { return }
+                 let world = SCNVector3(x.floatValue, y.floatValue, z.floatValue)
+                 let local = camera.convertVector(world, from: scene.rootNode)
+                 if local.x*local.x + local.y*local.y > 0.000001 {
+                     var angle = atan2(local.y, local.x)
+                     // Reverse upside-down text to stay readable at all angles.
+                     if angle > Float.pi/2 { angle -= Float.pi }
+                     if angle < -Float.pi/2 { angle += Float.pi }
+                     text.eulerAngles.z = angle
+                 }
+             }
+         }
+     }
+     func makeCoordinator() -> Coordinator { Coordinator() }
+
      func makeUIView(context: Context) -> PreviewSceneView {
          let view = PreviewSceneView(frame: .zero)
          view.allowsCameraControl = true
@@ -1121,6 +1149,8 @@ private struct FabReadOnly3DPreview: View {
          view.backgroundColor = UIColor.secondarySystemBackground
          view.antialiasingMode = .multisampling4X
          view.scene = buildScene()
+         view.delegate = context.coordinator
+         view.isPlaying = true
          view.priorResetID = resetID
          view.priorLabels = showDimensions
          focusCamera(view)
@@ -1181,29 +1211,110 @@ private struct FabReadOnly3DPreview: View {
          return material
      }
 
-     private func addLabel(_ text: String, at position: SCNVector3, to root: SCNNode, scale: Float) {
-         let geometry = SCNText(string: text, extrusionDepth: 0)
+     private func addLabel(_ title: String, at position: SCNVector3,
+                           to root: SCNNode, scale: Float,
+                           direction: SCNVector3 = SCNVector3(1,0,0)) {
+         let geometry = SCNText(string: title, extrusionDepth: 0)
          geometry.font = UIFont.boldSystemFont(ofSize: 1)
-         geometry.flatness = 0.08
-         let mat = SCNMaterial()
-         mat.diffuse.contents = UIColor.systemYellow
-         mat.lightingModel = .constant
-         mat.isDoubleSided = true
-         geometry.materials = [mat]
-         let node = SCNNode(geometry: geometry)
-         node.name = "roundDimensionLabel"
-         node.isHidden = !showDimensions
+         geometry.flatness = 0.07
+         let material = SCNMaterial()
+         material.diffuse.contents = UIColor.systemYellow
+         material.lightingModel = .constant
+         material.isDoubleSided = true
+         material.readsFromDepthBuffer = false
+         material.writesToDepthBuffer = false
+         geometry.materials = [material]
+         let anchor = SCNNode()
+         anchor.name = "roundDimensionLabel"
+         anchor.isHidden = !showDimensions
+         anchor.position = position
+         anchor.renderingOrder = 250
+         anchor.constraints = [SCNBillboardConstraint()]
+         anchor.userData = NSMutableDictionary(dictionary: [
+             "dx": NSNumber(value: direction.x),
+             "dy": NSNumber(value: direction.y),
+             "dz": NSNumber(value: direction.z)
+         ])
+         let text = SCNNode(geometry: geometry)
+         text.name = "dimensionText"
          let (low, high) = geometry.boundingBox
-         node.pivot = SCNMatrix4MakeTranslation((low.x + high.x)/2, (low.y + high.y)/2, 0)
-         node.scale = SCNVector3(scale, scale, scale)
-         node.position = position
-         node.constraints = [SCNBillboardConstraint()]
-         // Labels do not affect framing, but orbit with the model.
-         if let parent = root.parent {
-             parent.addChildNode(node)
-         } else {
-             root.addChildNode(node)
+         text.pivot = SCNMatrix4MakeTranslation((low.x + high.x)/2,
+                                                 (low.y + high.y)/2, 0)
+         text.scale = SCNVector3(scale, scale, scale)
+         anchor.addChildNode(text)
+         (root.parent ?? root).addChildNode(anchor)
+     }
+
+     private func addDimension(_ title: String, from start: SCNVector3,
+                               to finish: SCNVector3, offset: SCNVector3,
+                               root: SCNNode, size: Float) {
+         func shifted(_ p: SCNVector3) -> SCNVector3 {
+             SCNVector3(p.x+offset.x, p.y+offset.y, p.z+offset.z)
          }
+         let a = shifted(start), b = shifted(finish)
+         let labelPosition = SCNVector3((a.x+b.x)/2, (a.y+b.y)/2, (a.z+b.z)/2)
+         let along = SCNVector3(finish.x-start.x, finish.y-start.y,
+                                finish.z-start.z)
+         let lineVertices = [start, a, a, b, b, finish]
+         let src = SCNGeometrySource(vertices: lineVertices)
+         let indices: [UInt32] = [0,1, 2,3, 4,5]
+         let element = SCNGeometryElement(indices: indices, primitiveType: .line)
+         let geometry = SCNGeometry(sources: [src], elements: [element])
+         let lineMaterial = SCNMaterial()
+         lineMaterial.diffuse.contents = UIColor.systemYellow
+         lineMaterial.lightingModel = .constant
+         lineMaterial.isDoubleSided = true
+         lineMaterial.readsFromDepthBuffer = false
+         lineMaterial.writesToDepthBuffer = false
+         geometry.materials = [lineMaterial]
+         let lineNode = SCNNode(geometry: geometry)
+         lineNode.name = "roundDimensionLabel"
+         lineNode.isHidden = !showDimensions
+         lineNode.renderingOrder = 240
+         (root.parent ?? root).addChildNode(lineNode)
+         addLabel(title, at: labelPosition, to: root,
+                  scale: size, direction: along)
+     }
+
+     // Separate planar panels preserve the individual bump-brake facets.
+     // The round collars deliberately continue using smooth mesh().
+     private func panelMesh(rings: [[SCNVector3]]) -> SCNGeometry {
+         guard rings.count > 1, let first = rings.first, first.count > 2 else {
+             return mesh(rings: rings)
+         }
+         let count = first.count
+         var vertices: [SCNVector3] = []
+         var normals: [SCNVector3] = []
+         var uv: [CGPoint] = []
+         var indices: [UInt32] = []
+         for row in 0..<(rings.count-1) {
+             for col in 0..<count {
+                 let next = (col+1)%count
+                 let corners = [rings[row][col], rings[row][next],
+                                rings[row+1][col], rings[row+1][next]]
+                 let a=corners[0], b=corners[1], c=corners[2]
+                 let ux=c.x-a.x, uy=c.y-a.y, uz=c.z-a.z
+                 let vx=b.x-a.x, vy=b.y-a.y, vz=b.z-a.z
+                 let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx
+                 let mag=max(sqrt(nx*nx+ny*ny+nz*nz), Float(0.000001))
+                 let normal=SCNVector3(nx/mag,ny/mag,nz/mag)
+                 let index=UInt32(vertices.count)
+                 vertices.append(contentsOf: corners)
+                 normals.append(contentsOf: [normal,normal,normal,normal])
+                 uv.append(contentsOf: [
+                     CGPoint(x:0,y:0),CGPoint(x:1,y:0),
+                     CGPoint(x:0,y:1),CGPoint(x:1,y:1)
+                 ])
+                 indices.append(contentsOf: [index,index+2,index+1,
+                                             index+1,index+2,index+3])
+             }
+         }
+         let geo=SCNGeometry(sources:[SCNGeometrySource(vertices:vertices),
+                                      SCNGeometrySource(normals:normals),
+                                      SCNGeometrySource(textureCoordinates:uv)],
+                             elements:[SCNGeometryElement(indices:indices, primitiveType:.triangles)])
+         geo.materials=[metal]
+         return geo
      }
 
      private func mesh(rings: [[SCNVector3]], closeStart: Bool = false,
