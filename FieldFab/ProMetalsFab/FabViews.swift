@@ -1658,8 +1658,8 @@ private struct FabReadOnly3DPreview: View {
          scene.rootNode.addChildNode(body)
          let diameter = max(Float(m(fitting.inletWidth)), 0.001)
          let radius = diameter/2
-         let labelOffset = max(diameter*0.75, 0.075)
-         let labelSize = max(diameter*0.15, 0.013)
+         let labelOffset = max(diameter*0.25, Float(m(1.25)))
+         let labelSize = max(min(diameter*0.09, Float(m(2))), Float(m(0.55)))
          switch fitting.shape {
          case .roundStraight, .roundSpiral:
              let length = max(Float(m(fitting.length)), 0.001)
@@ -1796,79 +1796,117 @@ private struct FabReadOnly3DPreview: View {
                       at: SCNVector3(a/2 + labelOffset/2, 0, 0),
                       to: body, scale: labelSize)
          case .rectElbow45, .rectElbow90, .rectRadiusElbow:
-             // A swept rectangular wall. Square-throat and radius-elbow types
-             // use different inside bend radii, without decorative break lines.
-             let a = max(Float(m(fitting.inletWidth)), 0.001)
-             let b = max(Float(m(fitting.inletHeight)), 0.001)
-             let c = max(Float(m(fitting.outletWidth)), 0.001)
-             let d = max(Float(m(fitting.outletHeight)), 0.001)
-             let isRadius = fitting.shape == .rectRadiusElbow
-             let sweep = fitting.shape == .rectElbow45 ? Float.pi / 4 : Float.pi / 2
-             let inside = isRadius ? max(Float(m(fitting.radius)), 0.001) : Float(0.001)
-             let centerlineRadius = inside + a/2
-             let straightIn = isRadius ? Float(0) : max(Float(m(fitting.straightIn)), 0)
-             let straightOut = isRadius ? Float(0) : max(Float(m(fitting.straightOut)), 0)
-             let topShift = isRadius ? Float(m(fitting.verticalValue)) : Float(0)
-             var rings: [[SCNVector3]] = []
-             if straightIn > 0.001 {
-                 rings.append(bentRectangle(x: 0, y: -straightIn, angle: 0,
-                                            width: a, depth: b))
+             // Square elbows are sharp MITERED folds; only the separate
+             // radius elbow is bend-formed into multiple bump-brake facets.
+             let a=max(Float(m(fitting.inletWidth)),0.001)
+             let b=max(Float(m(fitting.inletHeight)),0.001)
+             let c=max(Float(m(fitting.outletWidth)),0.001)
+             let d=max(Float(m(fitting.outletHeight)),0.001)
+             let radiusType=fitting.shape == .rectRadiusElbow
+             let sweep=fitting.shape == .rectElbow45 ? Float.pi/4 : Float.pi/2
+             let inside=radiusType ? max(Float(m(fitting.radius)),0.001) : Float(0.001)
+             let bendRadius=inside+a/2
+             let straightIn=radiusType ? Float(0) : max(Float(m(fitting.straightIn)),0)
+             let straightOut=radiusType ? Float(0) : max(Float(m(fitting.straightOut)),0)
+             let topShift=radiusType ? Float(m(fitting.verticalValue)) : Float(0)
+             var rings: [[SCNVector3]]=[]
+             if straightIn>0.0001 {
+                 rings.append(bentRectangle(x:0,y:-straightIn,angle:0,
+                                            width:a,depth:b))
              }
-             rings.append(bentRectangle(x: 0, y: 0, angle: 0, width: a, depth: b))
-             let sections = fitting.shape == .rectElbow45 ? 14 : 24
-             for section in 1...sections {
-                 let t = Float(section) / Float(sections)
-                 let theta = sweep * t
-                 let cx = centerlineRadius * (1 - cos(theta))
-                 let cy = centerlineRadius * sin(theta)
-                 let width = a + (c - a) * t
-                 let depth = b + (d - b) * t
-                 rings.append(bentRectangle(x: cx, y: cy, angle: theta,
-                                            width: width, depth: depth,
-                                            zShift: topShift * t))
+             rings.append(bentRectangle(x:0,y:0,angle:0,width:a,depth:b))
+             // Two hard panels for square elbows, short series of real bent
+             // facets for the radius version. Neither is a smooth soft tube.
+             let sections=radiusType ? 16 : 2
+             for index in 1...sections {
+                 let t=Float(index)/Float(sections)
+                 let theta=sweep*t
+                 let centerX=bendRadius*(1-cos(theta))
+                 let centerY=bendRadius*sin(theta)
+                 rings.append(bentRectangle(x:centerX,y:centerY,angle:theta,
+                                            width:a+(c-a)*t,
+                                            depth:b+(d-b)*t,
+                                            zShift:topShift*t))
              }
-             let exitX = centerlineRadius * (1 - cos(sweep))
-             let exitY = centerlineRadius * sin(sweep)
-             if straightOut > 0.001 {
-                 rings.append(bentRectangle(x: exitX + sin(sweep)*straightOut,
-                                            y: exitY + cos(sweep)*straightOut,
-                                            angle: sweep, width: c, depth: d,
-                                            zShift: topShift))
+             let endX=bendRadius*(1-cos(sweep))
+             let endY=bendRadius*sin(sweep)
+             let finalX=endX+straightOut*sin(sweep)
+             let finalY=endY+straightOut*cos(sweep)
+             if straightOut>0.0001 {
+                 rings.append(bentRectangle(x:finalX,y:finalY,angle:sweep,
+                                            width:c,depth:d,zShift:topShift))
              }
-             body.addChildNode(SCNNode(geometry: mesh(rings: rings)))
-             addLabel("A  " + dimension(fitting.inletWidth),
-                      at: SCNVector3(0, -straightIn, b/2 + labelOffset/2),
-                      to: body, scale: labelSize)
-             addLabel("B  " + dimension(fitting.inletHeight),
-                      at: SCNVector3(a/2 + labelOffset/2, -straightIn, 0),
-                      to: body, scale: labelSize)
-             addLabel("C  " + dimension(fitting.outletWidth),
-                      at: SCNVector3(exitX + sin(sweep)*straightOut,
-                                     exitY + cos(sweep)*straightOut,
-                                     topShift + d/2 + labelOffset/2),
-                      to: body, scale: labelSize)
-             addLabel("D  " + dimension(fitting.outletHeight),
-                      at: SCNVector3(exitX + c/2 + labelOffset/2, exitY,
-                                     topShift),
-                      to: body, scale: labelSize)
-             if isRadius {
-                 addLabel("E  Radius " + dimension(fitting.radius),
-                          at: SCNVector3(centerlineRadius * 0.65, centerlineRadius * 0.45,
-                                         -b/2 - labelOffset/2),
-                          to: body, scale: labelSize * 0.85)
-                 addLabel("F  Shift " + dimension(fitting.verticalValue),
-                          at: SCNVector3(exitX + labelOffset, exitY,
-                                         topShift - d/2 - labelOffset/2),
-                          to: body, scale: labelSize * 0.85)
+             body.addChildNode(SCNNode(geometry:panelMesh(rings:rings)))
+             // Internal turning vanes are separate thin curved sheets
+             // (visually distinct from square-body folds).
+             if fitting.hasTurningVanes {
+                 var vanePanels: [[SCNVector3]]=[]
+                 let halfWidth=min(a,c)/2
+                 let bladeDepth=min(b,d)*0.8
+                 for vane in 1...4 {
+                     let across=Float(vane)/5
+                     let radiusOffset=(across-0.5)*2*halfWidth
+                     for piece in 0..<18 {
+                         let t0=Float(piece)/18
+                         let t1=Float(piece+1)/18
+                         func point(_ t:Float,_ z:Float)->SCNVector3 {
+                             let th=sweep*t
+                             return SCNVector3(bendRadius*(1-cos(th))+
+                                               radiusOffset*cos(th),
+                                               bendRadius*sin(th)-
+                                               radiusOffset*sin(th),z+topShift*t)
+                         }
+                         vanePanels.append([point(t0,-bladeDepth/2),
+                                            point(t1,-bladeDepth/2),
+                                            point(t0,bladeDepth/2),
+                                            point(t1,bladeDepth/2)])
+                     }
+                 }
+                 let vaneNode=SCNNode(geometry:quadsMesh(vanePanels))
+                 vaneNode.name="turningVanes"
+                 body.addChildNode(vaneNode)
+             }
+             let gap=max(Float(m(1)),min(a,b)*0.13)
+             addDimension("A  "+dimension(fitting.inletWidth),
+                          from:SCNVector3(-a/2,-straightIn,b/2),
+                          to:SCNVector3(a/2,-straightIn,b/2),
+                          offset:SCNVector3(0,0,gap),root:body,size:labelSize*0.72)
+             addDimension("B  "+dimension(fitting.inletHeight),
+                          from:SCNVector3(a/2,-straightIn,-b/2),
+                          to:SCNVector3(a/2,-straightIn,b/2),
+                          offset:SCNVector3(gap,0,0),root:body,size:labelSize*0.72)
+             let outerX=cos(sweep)*c/2
+             let outerY=-sin(sweep)*c/2
+             addDimension("C  "+dimension(fitting.outletWidth),
+                          from:SCNVector3(finalX-outerX,finalY-outerY,topShift+d/2),
+                          to:SCNVector3(finalX+outerX,finalY+outerY,topShift+d/2),
+                          offset:SCNVector3(0,0,gap),root:body,size:labelSize*0.72)
+             addDimension("D  "+dimension(fitting.outletHeight),
+                          from:SCNVector3(finalX+outerX,finalY+outerY,topShift-d/2),
+                          to:SCNVector3(finalX+outerX,finalY+outerY,topShift+d/2),
+                          offset:SCNVector3(gap,0,0),root:body,size:labelSize*0.72)
+             if radiusType {
+                 addDimension("E  Radius "+dimension(fitting.radius),
+                              from:SCNVector3(0,0,-b/2),
+                              to:SCNVector3(inside,0,-b/2),
+                              offset:SCNVector3(0,-gap,0),root:body,
+                              size:labelSize*0.65)
+                 addDimension("F  Shift "+dimension(fitting.verticalValue),
+                              from:SCNVector3(endX,endY,0),
+                              to:SCNVector3(endX,endY,topShift),
+                              offset:SCNVector3(gap,0,-gap),root:body,
+                              size:labelSize*0.65)
              } else {
-                 addLabel("E  " + dimension(fitting.straightIn),
-                          at: SCNVector3(-a/2 - labelOffset/2, -straightIn/2, 0),
-                          to: body, scale: labelSize * 0.85)
-                 addLabel("F  " + dimension(fitting.straightOut),
-                          at: SCNVector3(exitX + sin(sweep)*straightOut/2 + labelOffset/2,
-                                         exitY + cos(sweep)*straightOut/2,
-                                         -d/2 - labelOffset/2),
-                          to: body, scale: labelSize * 0.85)
+                 addDimension("E  "+dimension(fitting.straightIn),
+                              from:SCNVector3(-a/2,0,-b/2),
+                              to:SCNVector3(-a/2,-straightIn,-b/2),
+                              offset:SCNVector3(-gap,0,0),root:body,
+                              size:labelSize*0.65)
+                 addDimension("F  "+dimension(fitting.straightOut),
+                              from:SCNVector3(endX,endY,-d/2),
+                              to:SCNVector3(finalX,finalY,-d/2),
+                              offset:SCNVector3(gap,0,0),root:body,
+                              size:labelSize*0.65)
              }
          case .rectTee:
              addTee(to: body, labelOffset: labelOffset, labelSize: labelSize)
