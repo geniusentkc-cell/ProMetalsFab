@@ -160,7 +160,10 @@ enum FabPDFExporter {
                 details.append("CONN IN \(f.inletLabel()) / OUT \(f.outletLabel())")
             case .roundReducer:
                 details.append("A DIA IN \(fabInches(f.inletWidth)) · B DIA OUT \(fabInches(f.outletWidth))")
-                details.append("C LENGTH \(fabInches(f.length)) · \(f.reducerMode.rawValue.uppercased())")
+                details.append("INLET COLLAR \(fabInches(f.reducerInletCollarLength)) (\(f.reducerInletMode.rawValue.uppercased()))")
+                details.append("CENTER BODY \(fabInches(f.effectiveReducerBodyLength))")
+                details.append("OUTLET COLLAR \(fabInches(f.reducerOutletCollarLength)) (\(f.reducerOutletMode.rawValue.uppercased()))")
+                details.append("C OVERALL LENGTH \(fabInches(f.reducerOverallLength)) · \(f.reducerMode.rawValue.uppercased())")
                 if f.reducerMode == .flatTop {
                     details.append("FLAT TOP OFFSET \(fabInches(Swift.abs(f.outletWidth - f.inletWidth) / 2))")
                 }
