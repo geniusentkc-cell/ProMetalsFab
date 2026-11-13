@@ -1496,61 +1496,159 @@ private struct FabReadOnly3DPreview: View {
                  SCNVector3(x, centerY-w, -d), SCNVector3(x, centerY+w, -d)]
      }
 
-     // The tee is assembled from three open rectangular sleeves. The central
-     // overlap is illustrative; throat sizes control each outlet and reach.
+     // Joined sheet-metal shell (all panels in ONE geometry). Ports on the
+     // left, right, and bottom remain open; no overlapping duct boxes.
+     private func quadsMesh(_ quads: [[SCNVector3]]) -> SCNGeometry {
+         var vertices: [SCNVector3]=[]
+         var normals: [SCNVector3]=[]
+         var uv: [CGPoint]=[]
+         var indices: [UInt32]=[]
+         for quad in quads where quad.count==4 {
+             let a=quad[0], b=quad[1], c=quad[2]
+             let u=SCNVector3(b.x-a.x,b.y-a.y,b.z-a.z)
+             let v=SCNVector3(c.x-a.x,c.y-a.y,c.z-a.z)
+             let n=SCNVector3(u.y*v.z-u.z*v.y,
+                              u.z*v.x-u.x*v.z,
+                              u.x*v.y-u.y*v.x)
+             let mag=max(sqrt(n.x*n.x+n.y*n.y+n.z*n.z),Float(0.000001))
+             let normal=SCNVector3(n.x/mag,n.y/mag,n.z/mag)
+             let base=UInt32(vertices.count)
+             vertices.append(contentsOf:quad)
+             normals.append(contentsOf:[normal,normal,normal,normal])
+             uv.append(contentsOf:[CGPoint(x:0,y:0),CGPoint(x:1,y:0),
+                                   CGPoint(x:0,y:1),CGPoint(x:1,y:1)])
+             indices.append(contentsOf:[base,base+1,base+2,
+                                        base+1,base+3,base+2])
+         }
+         let geo=SCNGeometry(sources:[SCNGeometrySource(vertices:vertices),
+                                      SCNGeometrySource(normals:normals),
+                                      SCNGeometrySource(textureCoordinates:uv)],
+                             elements:[SCNGeometryElement(indices:indices,primitiveType:.triangles)])
+         geo.materials=[metal]
+         return geo
+     }
+
      private func addTee(to body: SCNNode, labelOffset: Float,
                          labelSize: Float) {
-         let a = max(Float(m(fitting.inletWidth)), 0.001)
-         let b = max(Float(m(fitting.inletHeight)), 0.001)
-         let c = max(Float(m(fitting.outletWidth)), 0.001)
-         let d = max(Float(m(fitting.outletHeight)), 0.001)
-         let e = max(Float(m(fitting.teeE)), 0.001)
-         let f = max(Float(m(fitting.teeF)), 0.001)
-         let trunk = max(Float(m(8)), a * 0.6)
-         let left = max(Float(m(6)), Float(m(fitting.teeG + fitting.teeH)) + c * 0.35)
-         let right = max(Float(m(6)), Float(m(fitting.teeI + fitting.teeJ)) + e * 0.35)
-         body.addChildNode(SCNNode(geometry: mesh(rings: [
-             rectangularEnd(width: a, depth: b, y: -trunk),
-             rectangularEnd(width: a, depth: b, y: 0)
-         ])))
-         body.addChildNode(SCNNode(geometry: mesh(rings: [
-             branchEnd(x: -left, width: c, depth: d),
-             branchEnd(x: 0, width: c, depth: d)
-         ])))
-         body.addChildNode(SCNNode(geometry: mesh(rings: [
-             branchEnd(x: 0, width: e, depth: f),
-             branchEnd(x: right, width: e, depth: f)
-         ])))
-         addLabel("A  " + dimension(fitting.inletWidth),
-                  at: SCNVector3(0, -trunk, b / 2 + labelOffset/2),
-                  to: body, scale: labelSize)
-         addLabel("B  " + dimension(fitting.inletHeight),
-                  at: SCNVector3(a/2 + labelOffset/2, -trunk, 0),
-                  to: body, scale: labelSize)
-         addLabel("C  " + dimension(fitting.outletWidth),
-                  at: SCNVector3(-left, c/2 + labelOffset/2, 0),
-                  to: body, scale: labelSize)
-         addLabel("D  " + dimension(fitting.outletHeight),
-                  at: SCNVector3(-left, 0, d/2 + labelOffset/2),
-                  to: body, scale: labelSize)
-         addLabel("E  " + dimension(fitting.teeE),
-                  at: SCNVector3(right, e/2 + labelOffset/2, 0),
-                  to: body, scale: labelSize)
-         addLabel("F  " + dimension(fitting.teeF),
-                  at: SCNVector3(right, 0, f/2 + labelOffset/2),
-                  to: body, scale: labelSize)
-         addLabel("G  " + dimension(fitting.teeG),
-                  at: SCNVector3(-left * 0.45, c/2 + labelOffset, -d/2),
-                  to: body, scale: labelSize * 0.8)
-         addLabel("H  " + dimension(fitting.teeH),
-                  at: SCNVector3(-left * 0.45, -c/2 - labelOffset, -d/2),
-                  to: body, scale: labelSize * 0.8)
-         addLabel("I  " + dimension(fitting.teeI),
-                  at: SCNVector3(right * 0.45, -e/2 - labelOffset, -f/2),
-                  to: body, scale: labelSize * 0.8)
-         addLabel("J  " + dimension(fitting.teeJ),
-                  at: SCNVector3(right * 0.45, e/2 + labelOffset, -f/2),
-                  to: body, scale: labelSize * 0.8)
+         let a=max(Float(m(fitting.inletWidth)),0.001)
+         let b=max(Float(m(fitting.inletHeight)),0.001)
+         let c=max(Float(m(fitting.outletWidth)),0.001)
+         let d=max(Float(m(fitting.outletHeight)),0.001)
+         let e=max(Float(m(fitting.teeE)),0.001)
+         let f=max(Float(m(fitting.teeF)),0.001)
+         let leftRun=max(Float(m(fitting.teeG+fitting.teeH)),Float(m(6)))
+         let rightRun=max(Float(m(fitting.teeI+fitting.teeJ)),Float(m(6)))
+         let xL = -a/2-leftRun
+         let xR = a/2+rightRun
+         let top=max(c,e)*0.6
+         let leftLow=top-c
+         let rightLow=top-e
+         let bottom=min(leftLow,rightLow)-max(a*0.55,Float(m(6)))
+         let depth=max(b,max(d,f))
+         let halfDepth=depth/2
+         var quads: [[SCNVector3]]=[]
+         func face(_ l: Float,_ r: Float,_ lo: Float,_ hi: Float,_ z: Float) {
+             quads.append([SCNVector3(l,lo,z),SCNVector3(r,lo,z),
+                           SCNVector3(l,hi,z),SCNVector3(r,hi,z)])
+         }
+         for z in [-halfDepth,halfDepth] {
+             face(xL,-a/2,leftLow,top,z)
+             face(-a/2,a/2,bottom,top,z)
+             face(a/2,xR,rightLow,top,z)
+         }
+         // Only outside boundaries are enclosed. Three port edges stay open.
+         let outline: [(Float,Float)]=[
+             (xL,top),(xR,top),(xR,rightLow),(a/2,rightLow),
+             (a/2,bottom),(-a/2,bottom),(-a/2,leftLow),(xL,leftLow)
+         ]
+         for i in outline.indices {
+             let a0=outline[i], a1=outline[(i+1)%outline.count]
+             // Do not close the two horizontal branches or the bottom inlet.
+             if i==1 || i==4 || i==7 { continue }
+             quads.append([SCNVector3(a0.0,a0.1,-halfDepth),
+                           SCNVector3(a1.0,a1.1,-halfDepth),
+                           SCNVector3(a0.0,a0.1,halfDepth),
+                           SCNVector3(a1.0,a1.1,halfDepth)])
+         }
+         body.addChildNode(SCNNode(geometry:quadsMesh(quads)))
+
+         // Curved airflow guides follow the paths on the approved 2D tee
+         // drawing. Vanes are separate internal sheets, not body crease lines.
+         if fitting.hasTurningVanes {
+             var blades: [[SCNVector3]]=[]
+             for n in 0..<5 {
+                 let t=Float(n+1)/6
+                 for side in [-1,1] {
+                     let left=side<0
+                     let outerX=left ? xL : xR
+                     let opening=left ? c : e
+                     let low=left ? leftLow : rightLow
+                     let startY=low+opening*t
+                     let targetX=(left ? -1:1)*a*(0.06+0.27*t)
+                     let endY=bottom+a*(0.18+0.25*t)
+                     let arcX=(outerX+targetX)*0.55
+                     let arcY=max(startY,endY)*0.78+min(startY,endY)*0.22
+                     func curved(_ u: Float)->SCNVector3 {
+                         let v=1-u
+                         return SCNVector3(v*v*outerX+2*v*u*arcX+u*u*targetX,
+                                           v*v*startY+2*v*u*arcY+u*u*endY,0)
+                     }
+                     for seg in 0..<12 {
+                         let p=curved(Float(seg)/12)
+                         let q=curved(Float(seg+1)/12)
+                         let z=halfDepth*0.72
+                         blades.append([SCNVector3(p.x,p.y,-z),
+                                        SCNVector3(q.x,q.y,-z),
+                                        SCNVector3(p.x,p.y,z),
+                                        SCNVector3(q.x,q.y,z)])
+                     }
+                 }
+             }
+             let vaneNode=SCNNode(geometry:quadsMesh(blades))
+             vaneNode.name="turningVanes"
+             body.addChildNode(vaneNode)
+         }
+         let gap=max(Float(m(0.75)),labelOffset*0.25)
+         addDimension("A  "+dimension(fitting.inletWidth),
+                      from:SCNVector3(-a/2,bottom,halfDepth),
+                      to:SCNVector3(a/2,bottom,halfDepth),
+                      offset:SCNVector3(0,-gap,0),root:body,size:labelSize*0.7)
+         addDimension("B  "+dimension(fitting.inletHeight),
+                      from:SCNVector3(a/2,bottom,-halfDepth),
+                      to:SCNVector3(a/2,bottom,halfDepth),
+                      offset:SCNVector3(gap,-gap,0),root:body,size:labelSize*0.7)
+         addDimension("C  "+dimension(fitting.outletWidth),
+                      from:SCNVector3(xL,leftLow,halfDepth),
+                      to:SCNVector3(xL,top,halfDepth),
+                      offset:SCNVector3(-gap,0,0),root:body,size:labelSize*0.7)
+         addDimension("D  "+dimension(fitting.outletHeight),
+                      from:SCNVector3(xL,top,-halfDepth),
+                      to:SCNVector3(xL,top,halfDepth),
+                      offset:SCNVector3(-gap,gap,0),root:body,size:labelSize*0.7)
+         addDimension("E  "+dimension(fitting.teeE),
+                      from:SCNVector3(xR,rightLow,halfDepth),
+                      to:SCNVector3(xR,top,halfDepth),
+                      offset:SCNVector3(gap,0,0),root:body,size:labelSize*0.7)
+         addDimension("F  "+dimension(fitting.teeF),
+                      from:SCNVector3(xR,top,-halfDepth),
+                      to:SCNVector3(xR,top,halfDepth),
+                      offset:SCNVector3(gap,gap,0),root:body,size:labelSize*0.7)
+         addDimension("G  "+dimension(fitting.teeG),
+                      from:SCNVector3(xL,top,halfDepth),
+                      to:SCNVector3(-a/2,top,halfDepth),
+                      offset:SCNVector3(0,gap,0),root:body,size:labelSize*0.6)
+         addDimension("H  "+dimension(fitting.teeH),
+                      from:SCNVector3(xL,leftLow,halfDepth),
+                      to:SCNVector3(-a/2,leftLow,halfDepth),
+                      offset:SCNVector3(0,-gap*0.65,0),root:body,size:labelSize*0.6)
+         addDimension("I  "+dimension(fitting.teeI),
+                      from:SCNVector3(a/2,rightLow,halfDepth),
+                      to:SCNVector3(xR,rightLow,halfDepth),
+                      offset:SCNVector3(0,-gap*0.65,0),root:body,size:labelSize*0.6)
+         addDimension("J  "+dimension(fitting.teeJ),
+                      from:SCNVector3(a/2,top,halfDepth),
+                      to:SCNVector3(xR,top,halfDepth),
+                      offset:SCNVector3(0,gap,0),root:body,size:labelSize*0.6)
      }
 
      private func buildScene() -> SCNScene {
