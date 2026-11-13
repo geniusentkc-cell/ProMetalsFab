@@ -122,7 +122,7 @@ enum FabPDFExporter {
                 details.append("CONN RIGHT  \(f.teeRightLabel())")
             case .squareRound:
                 details.append("A WIDTH \(fabInches(f.inletWidth)) · B DEPTH \(fabInches(f.inletHeight))")
-                details.append("C ROUND DIA \(fabInches(f.outletWidth)) · D LENGTH \(fabInches(f.length))")
+                details.append("C ROUND DIA \(fabInches(f.outletWidth)) · D OVERALL \(fabInches(f.length))")
                 details.append("RECT CONN  \(f.inletLabel())")
                 details.append("ROUND CONN  \(f.outletLabel())")
                 details.append("DAMPER  \(f.isDampered ? "YES" : "NO")")
@@ -149,6 +149,9 @@ enum FabPDFExporter {
                     details.append("E LENGTH \(fabInches(f.length))")
                 }
                 details.append("CONN IN \(f.inletLabel()) / OUT \(f.outletLabel())")
+            }
+            if f.shape.isRectElbow || f.shape == .rectTee {
+                details.append("TURNING VANES  \(f.hasTurningVanes ? "YES" : "NO")")
             }
             details.append("LINER \(f.effectiveLiner(in: area).rawValue)")
         } else if f.shape.isCatalogRound {
