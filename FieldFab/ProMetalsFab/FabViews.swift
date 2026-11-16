@@ -490,6 +490,24 @@ struct FabFittingEditor: View {
     private var hetoLengthSelection: Binding<FabHetoLengthMode> {
         Binding(get: { fitting.hetoMode }, set: { fitting.hetoLengthMode = $0 })
     }
+    private var takeoffCollarSelection: Binding<FabHetoLengthMode> {
+        Binding(get: { fitting.takeoffCollarSelection },
+                set: { fitting.takeoffCollarMode = $0 })
+    }
+    private var takeoffCollarCustom: Binding<Double> {
+        Binding(get: { fitting.takeoffCollarCustomLength ?? 4 },
+                set: { fitting.takeoffCollarCustomLength = $0 })
+    }
+    @ViewBuilder
+    private var takeoffCollarControls: some View {
+        Picker("Round Collar Length", selection: takeoffCollarSelection) {
+            Text("Standard — 4″").tag(FabHetoLengthMode.standard)
+            Text("Custom").tag(FabHetoLengthMode.custom)
+        }
+        if fitting.takeoffCollarSelection == .custom {
+            number("Round Collar — Custom Length", takeoffCollarCustom)
+        }
+    }
     private var teeE: Binding<Double> { Binding(get: { fitting.teeE }, set: { fitting.teeRightWidth = $0 }) }
     private var teeF: Binding<Double> { Binding(get: { fitting.teeF }, set: { fitting.teeRightDepth = $0 }) }
     private var teeG: Binding<Double> { Binding(get: { fitting.teeG }, set: { fitting.teeThroatG = $0 }) }
@@ -638,6 +656,7 @@ Section("Dimensions — Finished Inches") {
             number("A — Rectangular Width", $fitting.inletWidth)
             number("B — Rectangular Depth", $fitting.inletHeight)
             number("C — Round Diameter", $fitting.outletWidth)
+            takeoffCollarControls
             Picker("D — Length", selection: hetoLengthSelection) {
                 ForEach(FabHetoLengthMode.allCases) { Text($0.rawValue).tag($0) }
             }
@@ -680,6 +699,7 @@ Section("Dimensions — Finished Inches") {
             number("E — Overall Length", $fitting.length)
         } else if fitting.shape == .squareRound {
             number("C — Round Diameter", $fitting.outletWidth)
+            takeoffCollarControls
             number("D — Overall Length", $fitting.length)
         } else if isTee {
             number("C — Left Width", $fitting.outletWidth)
