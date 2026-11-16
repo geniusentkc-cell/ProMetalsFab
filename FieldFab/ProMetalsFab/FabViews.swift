@@ -1691,7 +1691,7 @@ private struct FabReadOnly3DPreview: View {
                  ? defaultTotal : Float(m(fitting.length))
              let total=max(requested,collarVertical+0.004)
              let bodyHeight=max(total-collarVertical,0.004)
-             let bottom=-total/2
+             let bottom = -total / 2
              let shoulder=bottom+bodyHeight
              let rings=formedTransitionRings(halfWidth:a/2, halfDepth:b/2,
                                               outletRadius:r, bottom:bottom,
