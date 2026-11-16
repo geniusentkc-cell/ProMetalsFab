@@ -1876,7 +1876,7 @@ private struct FabReadOnly3DPreview: View {
                           to:SCNVector3(a/2,-straightIn,b/2),
                           offset:SCNVector3(gap,0,0),root:body,size:labelSize*0.72)
              let outerX=cos(sweep)*c/2
-             let outerY=-sin(sweep)*c/2
+             let outerY = -sin(sweep) * c / 2
              addDimension("C  "+dimension(fitting.outletWidth),
                           from:SCNVector3(finalX-outerX,finalY-outerY,topShift+d/2),
                           to:SCNVector3(finalX+outerX,finalY+outerY,topShift+d/2),
