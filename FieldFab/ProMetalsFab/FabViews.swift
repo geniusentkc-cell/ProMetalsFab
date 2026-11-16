@@ -1123,12 +1123,11 @@ private struct FabReadOnly3DPreview: View {
                    let scene = view.scene else { return }
              scene.rootNode.enumerateChildNodes { node, _ in
                  guard node.name == "roundDimensionLabel",
-                       let data = node.userData,
-                       let x = data["dx"] as? NSNumber,
-                       let y = data["dy"] as? NSNumber,
-                       let z = data["dz"] as? NSNumber,
+                       let dx = node.value(forKey: "dimensionDX") as? NSNumber,
+                       let dy = node.value(forKey: "dimensionDY") as? NSNumber,
+                       let dz = node.value(forKey: "dimensionDZ") as? NSNumber,
                        let text = node.childNode(withName: "dimensionText", recursively: false) else { return }
-                 let world = SCNVector3(x.floatValue, y.floatValue, z.floatValue)
+                 let world = SCNVector3(dx.floatValue, dy.floatValue, dz.floatValue)
                  let local = camera.convertVector(world, from: scene.rootNode)
                  if local.x*local.x + local.y*local.y > 0.000001 {
                      var angle = atan2(local.y, local.x)
@@ -1230,11 +1229,9 @@ private struct FabReadOnly3DPreview: View {
          anchor.position = position
          anchor.renderingOrder = 250
          anchor.constraints = [SCNBillboardConstraint()]
-         anchor.userData = NSMutableDictionary(dictionary: [
-             "dx": NSNumber(value: direction.x),
-             "dy": NSNumber(value: direction.y),
-             "dz": NSNumber(value: direction.z)
-         ])
+         anchor.setValue(NSNumber(value: direction.x), forKey: "dimensionDX")
+         anchor.setValue(NSNumber(value: direction.y), forKey: "dimensionDY")
+         anchor.setValue(NSNumber(value: direction.z), forKey: "dimensionDZ")
          let text = SCNNode(geometry: geometry)
          text.name = "dimensionText"
          let (low, high) = geometry.boundingBox
@@ -1851,10 +1848,11 @@ private struct FabReadOnly3DPreview: View {
                          let t1=Float(piece+1)/18
                          func point(_ t:Float,_ z:Float)->SCNVector3 {
                              let th=sweep*t
-                             return SCNVector3(bendRadius*(1-cos(th))+
-                                               radiusOffset*cos(th),
-                                               bendRadius*sin(th)-
-                                               radiusOffset*sin(th),z+topShift*t)
+                             return SCNVector3(
+                                 bendRadius * (1 - cos(th)) + radiusOffset * cos(th),
+                                 bendRadius * sin(th) - radiusOffset * sin(th),
+                                 z + topShift * t
+                             )
                          }
                          vanePanels.append([point(t0,-bladeDepth/2),
                                             point(t1,-bladeDepth/2),
