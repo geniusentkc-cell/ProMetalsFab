@@ -123,6 +123,7 @@ enum FabPDFExporter {
             case .squareRound:
                 details.append("A WIDTH \(fabInches(f.inletWidth)) · B DEPTH \(fabInches(f.inletHeight))")
                 details.append("C ROUND DIA \(fabInches(f.outletWidth)) · D OVERALL \(fabInches(f.length))")
+                details.append("ROUND COLLAR \(fabInches(f.takeoffCollarLength)) (\(f.takeoffCollarSelection.rawValue.uppercased()))")
                 details.append("RECT CONN  \(f.inletLabel())")
                 details.append("ROUND CONN  \(f.outletLabel())")
                 details.append("DAMPER  \(f.isDampered ? "YES" : "NO")")
@@ -175,6 +176,7 @@ enum FabPDFExporter {
                 details.append("A×B RECT \(fabInches(f.inletWidth)) × \(fabInches(f.inletHeight))")
                 details.append("C ROUND DIA \(fabInches(f.outletWidth))")
                 details.append("D LENGTH \(f.needsCustomLength ? fabInches(f.length) : "STANDARD")")
+                details.append("ROUND COLLAR \(fabInches(f.takeoffCollarLength)) (\(f.takeoffCollarSelection.rawValue.uppercased()))")
                 details.append("RECT CONN \(f.inletLabel())")
                 details.append("ROUND CONN \(f.outletLabel())")
                 details.append("DAMPER \(f.isDampered ? "YES" : "NO")")
