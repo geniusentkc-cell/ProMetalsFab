@@ -1528,8 +1528,10 @@ private struct FabReadOnly3DPreview: View {
                                             point.y, point.z+clearance*dz/mag))
              }
          }
-         let indices = (0..<(vertices.count/2)).flatMap { i -> [UInt32] in
-             [UInt32(i*2), UInt32(i*2+1)]
+         var indices: [UInt32] = []
+         for i in 0..<(vertices.count / 2) {
+             indices.append(UInt32(i * 2))
+             indices.append(UInt32(i * 2 + 1))
          }
          let geo = SCNGeometry(sources: [SCNGeometrySource(vertices: vertices)],
                                elements: [SCNGeometryElement(indices: indices,
