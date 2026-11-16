@@ -245,6 +245,10 @@ struct FabFitting: Codable, Identifiable, Equatable {
     var reducerOutletCollarCustomLength: Double? = nil
     var reducerBodyLength: Double? = nil
     var hetoLengthMode: FabHetoLengthMode? = nil
+    // Optional for backward-compatible decoding of older saved jobs.
+    // Applies to rectangular-to-round and both HETO takeoffs.
+    var takeoffCollarMode: FabHetoLengthMode? = nil
+    var takeoffCollarCustomLength: Double? = nil
     var notes: String = ""
 
     var isRound: Bool { shape.isRound }
@@ -291,6 +295,12 @@ struct FabFitting: Codable, Identifiable, Equatable {
         length = reducerOverallLength
     }
     var hetoMode: FabHetoLengthMode { hetoLengthMode ?? .standard }
+    var takeoffCollarSelection: FabHetoLengthMode { takeoffCollarMode ?? .standard }
+    var takeoffCollarLength: Double {
+        takeoffCollarSelection == .standard
+            ? Self.standardReducerCollarLength
+            : (takeoffCollarCustomLength ?? Self.standardReducerCollarLength)
+    }
     var needsCustomLength: Bool { shape.isHeto && hetoMode == .custom }
     var effectiveOutletHeight: Double {
         (shape.isRound && !shape.isHeto || shape == .squareRound || shape.isHeto) ? outletWidth : outletHeight
@@ -421,6 +431,22 @@ struct FabFitting: Codable, Identifiable, Equatable {
             return "Length must be greater than zero."
         }
         if shape.isHeto && needsCustomLength && length <= 0 { return "Custom HETO length must be greater than zero." }
+        if shape.isHeto || shape == .squareRound {
+            guard takeoffCollarLength.isFinite && takeoffCollarLength > 0 else {
+                return "Round collar length must be a positive number."
+            }
+            if shape == .squareRound && length <= takeoffCollarLength {
+                return "Square-to-round overall length must exceed the collar length."
+            }
+            if shape.isHeto && needsCustomLength {
+                let angle = shape == .roundHeto45 ? Double.pi / 4 : 0.0
+                let collarHeight = takeoffCollarLength * cos(angle) +
+                    (outletWidth / 2) * sin(angle)
+                if length <= collarHeight {
+                    return "Custom HETO overall length must allow room for the collar and formed body."
+                }
+            }
+        }
         if shape.isRoundReducer {
             guard [reducerInletCollarLength, reducerOutletCollarLength, effectiveReducerBodyLength]
                     .allSatisfy({ $0.isFinite && $0 > 0 }) else {
