@@ -1772,11 +1772,14 @@ private struct FabReadOnly3DPreview: View {
                  ? defaultTotal : Float(m(fitting.length))
              let total=max(requested,collarVertical+0.004)
              let bodyHeight=max(total-collarVertical,0.004)
+             // On 45° HETO the whole transition advances sideways by the
+             // same amount it rises, keeping body and collar on one axis.
+             let shoulderX=shiftX+(angled ? bodyHeight : 0)
              let bottom = -total / 2
              let shoulder=bottom+bodyHeight
              let rings=formedTransitionRings(halfWidth:a/2, halfDepth:b/2,
                                               outletRadius:r, bottom:bottom,
-                                              shoulder:shoulder, outletShiftX:shiftX,
+                                              shoulder:shoulder, outletShiftX:shoulderX,
                                               tilt:tilt)
              body.addChildNode(SCNNode(geometry: panelMesh(rings:rings)))
              addFormedPanelEdges(rings, to: body)
@@ -1790,7 +1793,7 @@ private struct FabReadOnly3DPreview: View {
                                                   halfDepth:b/2+lip,
                                                   outletRadius:r,
                                                   bottom:bottom,shoulder:shoulder,
-                                                  outletShiftX:shiftX,tilt:tilt)[0]
+                                                  outletShiftX:shoulderX,tilt:tilt)[0]
              body.addChildNode(SCNNode(geometry: panelMesh(rings:[rings[0],outerRing])))
              if heto && fitting.isDampered {
                  let blade=SCNCylinder(radius: CGFloat(r*0.9),
@@ -1802,7 +1805,7 @@ private struct FabReadOnly3DPreview: View {
                  blade.materials=[bladeMaterial]
                  let bladeNode=SCNNode(geometry:blade)
                  let p=endRing[0]
-                 bladeNode.position=SCNVector3(shiftX+collar*0.5*sin(tilt),
+                 bladeNode.position=SCNVector3(shoulderX+collar*0.5*sin(tilt),
                                                shoulder+collar*0.5*cos(tilt),0)
                  bladeNode.eulerAngles.z = -tilt
                  body.addChildNode(bladeNode)
@@ -1819,7 +1822,7 @@ private struct FabReadOnly3DPreview: View {
                           to:SCNVector3(a/2,bottom,b/2),
                           offset:SCNVector3(dimensionDistance,0,0),
                           root:body,size:labelSize*0.85)
-             let centerX=shiftX+collar*sin(tilt)
+             let centerX=shoulderX+collar*sin(tilt)
              let centerY=shoulder+collar*cos(tilt)
              let cross=SCNVector3(r*cos(tilt),-r*sin(tilt),0)
              addDimension("C  Ø "+dimension(fitting.outletWidth),
@@ -1835,8 +1838,8 @@ private struct FabReadOnly3DPreview: View {
                           offset:SCNVector3(max(0,shiftX)+r+dimensionDistance,0,0),
                           root:body,size:labelSize*0.85)
              addDimension("COLLAR  "+dimension(fitting.takeoffCollarLength),
-                          from:SCNVector3(shiftX,shoulder,0),
-                          to:SCNVector3(shiftX+collar*sin(tilt),
+                          from:SCNVector3(shoulderX,shoulder,0),
+                          to:SCNVector3(shoulderX+collar*sin(tilt),
                                         shoulder+collar*cos(tilt),0),
                           offset:SCNVector3(r*cos(tilt)+dimensionDistance/2,
                                             -r*sin(tilt),0),
