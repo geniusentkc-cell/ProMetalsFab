@@ -1483,6 +1483,68 @@ private struct FabReadOnly3DPreview: View {
          }
      }
 
+
+     // Slightly raised circumferential joint marking the end of a rolled collar.
+     private func addCollarSeam(at ring: [SCNVector3], to root: SCNNode) {
+         guard ring.count > 2 else { return }
+         let center = average(ring)
+         let clearance = Float(m(0.025))
+         let vertices = ring.map { point -> SCNVector3 in
+             let dx = point.x-center.x, dy = point.y-center.y, dz = point.z-center.z
+             let mag = max(sqrt(dx*dx+dy*dy+dz*dz), Float(0.00001))
+             return SCNVector3(point.x + clearance*dx/mag,
+                               point.y + clearance*dy/mag,
+                               point.z + clearance*dz/mag)
+         }
+         let indices = (0..<ring.count).flatMap { index -> [UInt32] in
+             [UInt32(index), UInt32((index+1) % ring.count)]
+         }
+         let geo = SCNGeometry(sources: [SCNGeometrySource(vertices: vertices)],
+                               elements: [SCNGeometryElement(indices: indices,
+                                                             primitiveType: .line)])
+         let mat = SCNMaterial()
+         mat.diffuse.contents = UIColor(white: 0.67, alpha: 1)
+         mat.lightingModel = .constant
+         mat.writesToDepthBuffer = false
+         geo.materials = [mat]
+         let node = SCNNode(geometry: geo)
+         node.name = "rolledCollarJoint"
+         node.renderingOrder = 50
+         root.addChildNode(node)
+     }
+
+     // Selected longitudinal edges correspond to actual adjoining flat panels.
+     private func addFormedPanelEdges(_ rings: [[SCNVector3]], to root: SCNNode) {
+         guard rings.count == 2, rings[0].count == rings[1].count else { return }
+         let count = rings[0].count
+         let baseCenter = average(rings[0]), topCenter = average(rings[1])
+         let clearance = Float(m(0.012))
+         var vertices: [SCNVector3] = []
+         for i in stride(from: 0, to: count, by: 4) {
+             for (point, center) in [(rings[0][i], baseCenter), (rings[1][i], topCenter)] {
+                 let dx = point.x-center.x, dz = point.z-center.z
+                 let mag = max(sqrt(dx*dx+dz*dz), Float(0.00001))
+                 vertices.append(SCNVector3(point.x+clearance*dx/mag,
+                                            point.y, point.z+clearance*dz/mag))
+             }
+         }
+         let indices = (0..<(vertices.count/2)).flatMap { i -> [UInt32] in
+             [UInt32(i*2), UInt32(i*2+1)]
+         }
+         let geo = SCNGeometry(sources: [SCNGeometrySource(vertices: vertices)],
+                               elements: [SCNGeometryElement(indices: indices,
+                                                             primitiveType: .line)])
+         let mat = SCNMaterial()
+         mat.diffuse.contents = UIColor(white: 0.53, alpha: 1)
+         mat.lightingModel = .constant
+         mat.writesToDepthBuffer = false
+         geo.materials = [mat]
+         let node = SCNNode(geometry: geo)
+         node.name = "formedPanelEdges"
+         node.renderingOrder = 45
+         root.addChildNode(node)
+     }
+
      // Four real corners for rectangular duct ends; no cosmetic crease lines.
      private func rectangularEnd(width: Float, depth: Float, y: Float) -> [SCNVector3] {
          let w = max(width, 0.001) / 2
@@ -1694,12 +1756,12 @@ private struct FabReadOnly3DPreview: View {
              let b=max(Float(m(fitting.inletHeight)), 0.001)
              let c=max(Float(m(fitting.outletWidth)), 0.001)
              let r=c/2
-             let collar=Float(m(4))
+             let collar=max(Float(m(fitting.takeoffCollarLength)),0.001)
              let heto=fitting.shape.isHeto
              let angled=fitting.shape == .roundHeto45
              let tilt=angled ? Float.pi/4 : Float(0)
              let baseHalf=a/2
-             let shiftX=heto ? max(0, baseHalf-r*0.7) : Float(0)
+             let shiftX=heto ? baseHalf-r : Float(0)
              // Custom D is total height from rectangular mouth to highest
              // round-collar edge, NOT the transition-only developed length.
              let collarVertical=collar*cos(tilt) + r*abs(sin(tilt))
@@ -1715,8 +1777,10 @@ private struct FabReadOnly3DPreview: View {
                                               shoulder:shoulder, outletShiftX:shiftX,
                                               tilt:tilt)
              body.addChildNode(SCNNode(geometry: panelMesh(rings:rings)))
+             addFormedPanelEdges(rings, to: body)
              let endRing=collarExit(for:rings[1],length:collar,tilt:tilt)
              body.addChildNode(SCNNode(geometry: mesh(rings:[rings[1],endRing])))
+             addCollarSeam(at: rings[1], to: body)
              // A shallow rectangular return around the mounting mouth. It
              // remains a connected visual sheet, not a second duct fitting.
              let lip=Float(m(0.375))
@@ -1768,6 +1832,13 @@ private struct FabReadOnly3DPreview: View {
                           to:SCNVector3(a/2,bottom+total,0),
                           offset:SCNVector3(max(0,shiftX)+r+dimensionDistance,0,0),
                           root:body,size:labelSize*0.85)
+             addDimension("COLLAR  "+dimension(fitting.takeoffCollarLength),
+                          from:SCNVector3(shiftX,shoulder,0),
+                          to:SCNVector3(shiftX+collar*sin(tilt),
+                                        shoulder+collar*cos(tilt),0),
+                          offset:SCNVector3(r*cos(tilt)+dimensionDistance/2,
+                                            -r*sin(tilt),0),
+                          root:body,size:labelSize*0.72)
          case .roundReducer, .roundEccentric:
              let inletCollar = max(Float(m(fitting.reducerInletCollarLength)), 0.001)
              let bodyLength = max(Float(m(fitting.effectiveReducerBodyLength)), 0.001)
@@ -1781,21 +1852,37 @@ private struct FabReadOnly3DPreview: View {
              let bodyStart = start + inletCollar
              let bodyEnd = bodyStart + bodyLength
              let finish = bodyEnd + outletCollar
-             body.addChildNode(SCNNode(geometry: mesh(rings: [
-                 circularRing(radius: radius, y: start),
-                 circularRing(radius: radius, y: bodyStart),
-                 circularRing(radius: outRadius, y: bodyEnd, shiftZ: shiftZ),
-                 circularRing(radius: outRadius, y: finish, shiftZ: shiftZ)
-             ])))
+             let inletMouth = circularRing(radius: radius, y: start)
+             let inletShoulder = circularRing(radius: radius, y: bodyStart)
+             let outletShoulder = circularRing(radius: outRadius, y: bodyEnd, shiftZ: shiftZ)
+             let outletMouth = circularRing(radius: outRadius, y: finish, shiftZ: shiftZ)
+             body.addChildNode(SCNNode(geometry: mesh(rings: [inletMouth, inletShoulder])))
+             body.addChildNode(SCNNode(geometry: mesh(rings: [inletShoulder, outletShoulder])))
+             body.addChildNode(SCNNode(geometry: mesh(rings: [outletShoulder, outletMouth])))
+             addCollarSeam(at: inletShoulder, to: body)
+             addCollarSeam(at: outletShoulder, to: body)
              addLabel("A  " + dimension(fitting.inletWidth),
                       at: SCNVector3(0, start, radius+labelOffset/2),
                       to: body, scale: labelSize)
              addLabel("B  " + dimension(fitting.outletWidth),
                       at: SCNVector3(0, finish, outRadius+shiftZ+labelOffset/2),
                       to: body, scale: labelSize)
-             addLabel("C  " + dimension(fitting.reducerOverallLength),
-                      at: SCNVector3(radius+labelOffset, 0, 0),
-                      to: body, scale: labelSize)
+             let gap=max(Float(m(1)),radius*0.18)
+             addDimension("C  "+dimension(fitting.reducerOverallLength),
+                          from:SCNVector3(radius,start,0),
+                          to:SCNVector3(radius,finish,0),
+                          offset:SCNVector3(gap*2.1,0,0),
+                          root:body,size:labelSize*0.82)
+             addDimension("IN COLLAR  "+dimension(fitting.reducerInletCollarLength),
+                          from:SCNVector3(radius,start,0),
+                          to:SCNVector3(radius,bodyStart,0),
+                          offset:SCNVector3(gap*0.55,0,0),
+                          root:body,size:labelSize*0.72)
+             addDimension("OUT COLLAR  "+dimension(fitting.reducerOutletCollarLength),
+                          from:SCNVector3(outRadius,bodyEnd,shiftZ),
+                          to:SCNVector3(outRadius,finish,shiftZ),
+                          offset:SCNVector3(gap*0.8,0,0),
+                          root:body,size:labelSize*0.72)
          case .rectEndCap:
              // Closed front face, single open rectangular connection at the rear.
              // The shallow illustrative rim is not a user-entered dimension.
