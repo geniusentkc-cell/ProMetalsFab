@@ -17,6 +17,8 @@ extension DuctTransition {
         var currentDuctwork: DuctTransition.DuctData? = nil
         var crossbrake: Bool = false
         var particlePhysicsEnabled: Bool = false
+        var lastPreviewActionID: Int = 0
+        var showingFabLabels: Bool = false
     }
     
     class DuctARSCNView: ARSCNView {
@@ -58,6 +60,14 @@ extension DuctTransition {
         var ductwork: DuctTransition.DuctData
         var ductSceneHitTest: (String) -> Void
         @Binding var selectorShown: Bool
+        // ProMetalsFab preview settings; existing FieldFab views keep their defaults.
+        var isFabPreview = false
+        var previewAction = 0 // 1/-1 yaw, 2/-2 pitch, 3 reset
+        var previewActionID = 0
+        var showFabLabels = false
+        private var useParticles: Bool { particlePhysicsEnabled && !isFabPreview }
+        // ProMetalsFab previews always show smooth sheet-metal faces.
+        private var effectiveCrossBrake: Bool { !isFabPreview && crossBrake }
         @State var cameraRollTime: Date = Date()
         
         func ductNode(_ scene: SCNScene?) -> SCNNode {
@@ -72,6 +82,14 @@ extension DuctTransition {
             view.rendersContinuously = !energySaver
         }
         func bgTextureUpdate(_ view: UIViewType, _ scene: SCNScene?) {
+            if isFabPreview {
+                // Use a neutral backdrop in fabrication previews.
+                let background = UIColor.secondarySystemBackground
+                scene?.background.contents = background
+                scene?.lightingEnvironment.contents = background
+                view.backgroundColor = background
+                return
+            }
             if bgType == .image {
                 let img = UIImage(named: bgImage.rawValue)
                 scene?.background.contents = img
@@ -83,13 +101,16 @@ extension DuctTransition {
             }
         }
         func materialUpdate(_ scene: SCNScene?) {
+            // Match the galvanized appearance across all ProMetalsFab previews.
+            // Preserve configurable FieldFab materials outside the fabrication app.
+            let finish = isFabPreview ? "galvanized" : texture
             for node in ductNode(scene).childNodes {
-                if node.name == "tnode" { continue }
-                node.geometry?.firstMaterial?.diffuse.contents = UIImage(named: "\(texture)-diffuse")
-                node.geometry?.firstMaterial?.metalness.contents = UIImage(named: "\(texture)-metallic")
-                node.geometry?.firstMaterial?.normal.contents = UIImage(named: "\(texture)-normal")
-                node.geometry?.firstMaterial?.roughness.contents = UIImage(named: "\(texture)-roughness")
-                node.geometry?.firstMaterial?.lightingModel = lighting.scn
+                if node.name == "tnode" || node.name == "fabDimensionLabel" { continue }
+                node.geometry?.firstMaterial?.diffuse.contents = UIImage(named: "\(finish)-diffuse")
+                node.geometry?.firstMaterial?.metalness.contents = UIImage(named: "\(finish)-metallic")
+                node.geometry?.firstMaterial?.normal.contents = UIImage(named: "\(finish)-normal")
+                node.geometry?.firstMaterial?.roughness.contents = UIImage(named: "\(finish)-roughness")
+                node.geometry?.firstMaterial?.lightingModel = isFabPreview ? .physicallyBased : lighting.scn
             }
         }
         
@@ -99,7 +120,7 @@ extension DuctTransition {
             dNode.name = "duct"
             let vdata = ductwork.vertexData
             for face in DuctTransition.Face.allCases {
-                let faceNode = DuctTransition.FaceGeometry.generate(data: vdata, face: face, crossBrake: crossBrake)
+                let faceNode = DuctTransition.FaceGeometry.generate(data: vdata, face: face, crossBrake: effectiveCrossBrake)
                     .toNode(name: face.localizedString)
                 dNode.addChildNode(faceNode)
                 for edge in DuctTransition.TabEdge.allCases {
@@ -111,7 +132,7 @@ extension DuctTransition {
             }
             
             scene?.rootNode.childNode(withName: "air", recursively: false)?.removeFromParentNode()
-            if particlePhysicsEnabled {
+            if useParticles {
                 let airParticles = SCNParticleSystem()
                 let plane = SCNBox(width: vdata[.fbr].x.cg, height: 0.00000001, length: vdata[.fbr].z.cg, chamferRadius: 0.0000001)
                 
@@ -159,7 +180,41 @@ extension DuctTransition {
                 scene?.rootNode.addChildNode(emitterNode)
             }
             
+            if showFabLabels { addFabDimensionLabels(to: dNode, vertices: vdata) }
             scene?.rootNode.addChildNode(dNode)
+        }
+        private func addFabDimensionLabels(to root: SCNNode, vertices: DuctTransition.VertexData) {
+            let v = vertices.outer
+            guard v.count >= 8 else { return }
+            let radius = max(root.boundingSphere.radius, Float(0.1))
+            let pad = max(radius * 0.22, Float(0.035))
+            let size = max(radius * 0.075, Float(0.012))
+            let fmt: (Double) -> String = { String(format: "%g", $0) + "\u{2033}" }
+            let labels: [(String, SCNVector3)] = [
+                ("A  " + fmt(ductwork[.width]), SCNVector3((v[2].x + v[3].x)/2, v[2].y, v[2].z + pad)),
+                ("B  " + fmt(ductwork[.depth]), SCNVector3(v[2].x - pad, v[2].y, 0)),
+                ("C  " + fmt(ductwork[.twidth]), SCNVector3((v[0].x + v[1].x)/2, v[1].y, v[1].z + pad)),
+                ("D  " + fmt(ductwork[.tdepth]), SCNVector3(v[1].x - pad, v[1].y, (v[1].z + v[5].z)/2)),
+                ("E  " + fmt(ductwork[.length]), SCNVector3((v.map { $0.x }.max() ?? 0) + pad, 0, 0))
+            ]
+            for (value, location) in labels {
+                let geo = SCNText(string: value, extrusionDepth: 0)
+                geo.font = UIFont.systemFont(ofSize: 1, weight: .bold)
+                geo.flatness = 0.05
+                let material = SCNMaterial()
+                material.diffuse.contents = UIColor.systemYellow
+                material.lightingModel = .constant
+                material.isDoubleSided = true
+                geo.materials = [material]
+                let node = SCNNode(geometry: geo)
+                node.name = "fabDimensionLabel"
+                let (lower, upper) = geo.boundingBox
+                node.pivot = SCNMatrix4MakeTranslation((lower.x + upper.x)/2, (lower.y + upper.y)/2, 0)
+                node.scale = SCNVector3(size, size, size)
+                node.position = location
+                node.constraints = [SCNBillboardConstraint()]
+                root.addChildNode(node)
+            }
         }
         func helpersUpdate(_ scene: SCNScene?) {
             let i = CGFloat(0.25)
@@ -194,6 +249,21 @@ extension DuctTransition {
             }
         }
         
+        private func performFabPreviewAction(_ action: Int, on view: UIViewType) {
+            guard let cam = view.scene?.rootNode.childNode(withName: "Camera", recursively: false) else { return }
+            if action == 3 { moveCamera(view); return }
+            guard abs(action) == 1 || abs(action) == 2 else { return }
+            let angle: Float = (action < 0 ? -1 : 1) * .pi / 12
+            let c = cos(angle), s = sin(angle)
+            let p = cam.position
+            if abs(action) == 1 {
+                cam.position = SCNVector3(p.x*c + p.z*s, p.y, p.z*c - p.x*s)
+            } else {
+                cam.position = SCNVector3(p.x, p.y*c - p.z*s, p.y*s + p.z*c)
+            }
+            cam.look(at: SCNVector3Zero)
+            view.pointOfView = cam
+        }
         func makeUIView(context: Context) -> UIViewType {
             let scene = SCNScene()
             let view = UIViewType(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
@@ -212,13 +282,16 @@ extension DuctTransition {
             geometryUpdateAll(scene)
             materialUpdate(scene)
             helpersUpdate(scene)
-            view.crossbrake = crossBrake
+            view.crossbrake = effectiveCrossBrake
             let pressG = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.hit(g:)))
             
             view.addGestureRecognizer(pressG)
             view.scene = scene
             moveCamera(view)
             view.currentDuctwork = ductwork
+            view.particlePhysicsEnabled = useParticles
+            view.lastPreviewActionID = previewActionID
+            view.showingFabLabels = showFabLabels
             #if DEBUG
             view.debugOptions = [SCNDebugOptions(rawValue: 2048)]
             #endif
@@ -228,12 +301,17 @@ extension DuctTransition {
         func updateUIView(_ uiView: UIViewType, context: Context) {
             bgTextureUpdate(uiView, uiView.scene)
             energyUpdate(uiView)
-            if ductwork != uiView.currentDuctwork || crossBrake != uiView.crossbrake || particlePhysicsEnabled != uiView.particlePhysicsEnabled {
+            if ductwork != uiView.currentDuctwork || effectiveCrossBrake != uiView.crossbrake || useParticles != uiView.particlePhysicsEnabled || (isFabPreview && showFabLabels != uiView.showingFabLabels) {
                 geometryUpdateAll(uiView.scene)
                 if ductwork != uiView.currentDuctwork {moveCamera(uiView)}
                 uiView.currentDuctwork = ductwork
-                uiView.crossbrake = crossBrake
-                uiView.particlePhysicsEnabled = particlePhysicsEnabled
+                uiView.crossbrake = effectiveCrossBrake
+                uiView.particlePhysicsEnabled = useParticles
+                uiView.showingFabLabels = showFabLabels
+            }
+            if isFabPreview && previewActionID != uiView.lastPreviewActionID {
+                performFabPreviewAction(previewAction, on: uiView)
+                uiView.lastPreviewActionID = previewActionID
             }
             materialUpdate(uiView.scene)
             helpersUpdate(uiView.scene)

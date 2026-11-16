@@ -3,6 +3,9 @@ name: ProMetalsFab iOS Build
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/v4-round-library
 
 jobs:
   build:
@@ -18,18 +21,6 @@ jobs:
       - name: Find available Xcode schemes
         run: |
           xcodebuild -list -project FieldFab.xcodeproj
-
-      - name: Compile iOS simulator app
-        run: |
-          xcodebuild \
-            -project FieldFab.xcodeproj \
-            -scheme FieldFab \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            build
 
       - name: Build unsigned iPhone application
         run: |
@@ -60,13 +51,5 @@ jobs:
         with:
           name: ProMetalsFab-iPhone-IPA
           path: ipa/ProMetalsFab-unsigned.ipa
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload iOS simulator app
-        uses: actions/upload-artifact@v4
-        with:
-          name: ProMetalsFab-iOS-Simulator
-          path: build/Build/Products/Debug-iphonesimulator/*.app
           if-no-files-found: error
           retention-days: 7

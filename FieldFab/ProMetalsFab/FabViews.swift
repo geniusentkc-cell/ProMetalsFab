@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import SceneKit
 
 struct FabHomeView: View {
     @EnvironmentObject private var store: FabStore
@@ -35,17 +36,12 @@ struct FabHomeView: View {
                         ids.forEach { store.removeJob($0) }
                     }
                 } header: { Text("Jobs") }
-                Section {
-                    Label("V1 stores jobs on this iPhone. Export PDFs to share with the shop.", systemImage: "iphone")
-                        .font(.footnote).foregroundColor(.secondary)
-                    NavigationLink("Legacy transition tool") {
-                        DuctTransition.ModuleView()
-                    }
-                } header: { Text("Tools") }
             }
             .navigationTitle("ProMetalsFab")
             .toolbar { ToolbarItem(placement: .navigationBarTrailing) {
-                Button { jobName = ""; addingJob = true } label: { Image(systemName: "plus") }
+                Button { jobName = ""; addingJob = true } label: {
+                    Text("＋ Add Job").fontWeight(.semibold).fixedSize(horizontal: true, vertical: false)
+                }
             }}
             .alert("New Job", isPresented: $addingJob) {
                 TextField("Job name", text: $jobName)
@@ -65,8 +61,7 @@ struct FabHomeView: View {
 struct FabJobView: View {
     @EnvironmentObject private var store: FabStore
     let jobID: UUID
-    @State private var addingArea = false
-    @State private var newAreaName = ""
+    @State private var creatingArea = false
     @State private var editingArea: FabArea?
     @State private var shareFile: FabExportFile?
     @State private var exportError: String?
@@ -75,10 +70,14 @@ struct FabJobView: View {
         List {
             if let job = job {
                 Section("Fabrication Requests") {
-                    NavigationLink {
-                        FabAreaFittingsView(jobID: jobID, areaID: nil)
-                    } label: {
-                        Label("Unassigned / Job Root (\(job.fittings(in: nil).count))", systemImage: "tray")
+                    // Hide the old job-root row unless existing fittings need a safe place to access them.
+                    // Deleting an area moves its fittings here; never silently hide saved data.
+                    if !job.fittings(in: nil).isEmpty {
+                        NavigationLink {
+                            FabAreaFittingsView(jobID: jobID, areaID: nil)
+                        } label: {
+                            Label("Fittings to Assign (\(job.fittings(in: nil).count))", systemImage: "tray.full")
+                        }
                     }
                     ForEach(job.areas) { area in
                         HStack {
@@ -117,19 +116,17 @@ struct FabJobView: View {
         .navigationTitle(job?.name ?? "Job")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .navigationBarTrailing) {
-            Button { newAreaName = ""; addingArea = true } label: { Label("Add Area", systemImage: "folder.badge.plus") }
-        }}
-        .alert("New Area", isPresented: $addingArea) {
-            TextField("Floor or area name", text: $newAreaName)
-            Button("Create") {
-                let name = newAreaName.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !name.isEmpty, var changed = job {
-                    changed.areas.append(FabArea(name: name))
-                    store.replace(changed)
-                }
+            Button { creatingArea = true } label: {
+                Text("＋ Add Area").fontWeight(.semibold).fixedSize(horizontal: true, vertical: false)
             }
-            Button("Cancel", role: .cancel) {}
-        } message: { Text("Example: Second Floor") }
+        }}
+        .sheet(isPresented: $creatingArea) {
+            FabAreaEditor(area: FabArea(name: "")) { saved in
+                guard var changed = job else { return }
+                changed.areas.append(saved)
+                store.replace(changed)
+            }
+        }
         .sheet(item: $editingArea) { area in
             FabAreaEditor(area: area) { saved in
                 guard var changed = job, let i = changed.areas.firstIndex(where: { $0.id == saved.id }) else { return }
@@ -151,6 +148,7 @@ struct FabJobView: View {
 struct FabAreaEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var area: FabArea
+    @State private var showAreaValidation = false
     let onSave: (FabArea) -> Void
     init(area: FabArea, onSave: @escaping (FabArea) -> Void) {
         _area = State(initialValue: area); self.onSave = onSave
@@ -159,6 +157,26 @@ struct FabAreaEditor: View {
         NavigationStack {
             Form {
                 Section("Area") { TextField("Area name", text: $area.name) }
+                Section("Default Material & Gauge — All Fittings") {
+                    Picker("Material", selection: Binding(
+                        get: { area.defaultMaterial }, set: { area.material = $0 }
+                    )) {
+                        ForEach(FabMaterial.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    Picker("Gauge", selection: Binding(
+                        get: { area.defaultGauge }, set: { area.gauge = $0 }
+                    )) {
+                        ForEach(FabGauge.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    if area.defaultGauge == .custom {
+                        TextField("Custom gauge or thickness", text: Binding(
+                            get: { area.customGauge ?? "" },
+                            set: { area.customGauge = $0 }
+                        ))
+                    }
+                    Text("New fittings inherit these values. Existing fittings with no overrides also follow changes to area defaults.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
                 Section("Rectangular fittings — liner") {
                     Picker("Default liner", selection: $area.rectangularLiner) {
                         ForEach(FabLiner.allCases) { Text($0.rawValue).tag($0) }
@@ -179,12 +197,22 @@ struct FabAreaEditor: View {
                         .foregroundColor(.secondary).font(.footnote)
                 }
             }
-            .navigationTitle("Area Settings").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(area.name.isEmpty ? "New Area" : "Area Settings")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Save") {
-                    if !area.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { onSave(area); dismiss() }
+                    let validName = !area.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    let validGauge = area.defaultGauge != .custom ||
+                        !(area.customGauge ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    if validName && validGauge { onSave(area); dismiss() }
+                    else { showAreaValidation = true }
                 }}
+            }
+            .alert("Check Area Defaults", isPresented: $showAreaValidation) {
+                Button("OK") {}
+            } message: {
+                Text("Enter an area name and, when Custom is selected, a custom gauge or thickness.")
             }
         }
     }
@@ -205,14 +233,14 @@ struct FabAreaFittingsView: View {
         List {
             Section {
                 if list.isEmpty {
-                    Text("No fittings yet. Tap + to create your first fitting.")
+                    Text("No fittings yet. Tap Add Fitting to create your first fitting.")
                         .foregroundColor(.secondary)
                 }
                 ForEach(list) { fitting in
                     Button { editing = fitting } label: {
                         HStack(spacing: 12) {
-                            Image(systemName: fitting.isRound ? "circle.dotted.circle" : "square.on.square")
-                                .font(.title3).foregroundColor(.blue).frame(width: 28)
+                            FabFittingListIcon(fitting: fitting)
+                                .frame(width: 52, height: 48)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(fitting.name.isEmpty ? fitting.shape.displayName : fitting.name)
                                     .font(.headline).foregroundColor(.primary)
@@ -247,15 +275,17 @@ struct FabAreaFittingsView: View {
             if let job = job, !list.isEmpty {
                 Section {
                     Button { export(job) } label: {
-                        Label("Export \(area?.name ?? "Job Root") PDF", systemImage: "square.and.arrow.up")
+                        Label("Export \(area?.name ?? "Fittings to Assign") PDF", systemImage: "square.and.arrow.up")
                     }
                 }
             }
         }
-        .navigationTitle(area?.name ?? "Job Root")
+        .navigationTitle(area?.name ?? "Fittings to Assign")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button { adding = true } label: { Image(systemName: "plus") }
+                Button { adding = true } label: {
+                    Text("＋ Add Fitting").fontWeight(.semibold).fixedSize(horizontal: true, vertical: false)
+                }
             }
             ToolbarItem(placement: .navigationBarLeading) { EditButton() }
         }
@@ -349,12 +379,14 @@ struct FabFittingEditor: View {
     let onSave: (FabFitting) -> Void
     let dismissAfterSave: Bool
     @State private var showError = false
+    @State private var show3DPreview = false
     @State private var customizedTransition = false
+    @FocusState private var dimensionFocused: Bool
 
     init(fitting: FabFitting, area: FabArea?, dismissAfterSave: Bool = true,
          onSave: @escaping (FabFitting) -> Void) {
         var editable = fitting
-        if editable.isRound {
+        if editable.isRound && !editable.shape.isHeto {
             // Normalize V1 labels without breaking existing saved connections.
             if editable.inletConnection == .flanged && editable.inletSpecial.isEmpty {
                 editable.inletSpecial = "Flanged"
@@ -392,12 +424,90 @@ struct FabFittingEditor: View {
     private var isRound: Bool { fitting.isRound }
     private var isRoundElbow: Bool { fitting.shape.isRoundElbow }
     private var isRectElbow: Bool { fitting.shape.isRectElbow }
-    private var inConnections: [FabConnection] { isRound ? FabConnection.round : FabConnection.rectangular }
-    private var outConnections: [FabConnection] { (isRound || fitting.shape == .squareRound) ? FabConnection.round : FabConnection.rectangular }
+    private var inConnections: [FabConnection] {
+        if fitting.shape.isHeto { return FabConnection.rectangular }
+        if fitting.shape.isRoundSpiral { return FabConnection.spiral }
+        return isRound ? FabConnection.round : FabConnection.rectangular
+    }
+    private var outConnections: [FabConnection] {
+        if fitting.shape.isRoundSpiral { return FabConnection.spiral }
+        return (isRound || fitting.shape == .squareRound) ? FabConnection.round : FabConnection.rectangular
+    }
     private var isSquareElbow: Bool { fitting.shape.isSquareElbow }
     private var isTransition: Bool { fitting.shape == .rectTransition }
     private var isTee: Bool { fitting.shape == .rectTee }
-    private var isEndCap: Bool { fitting.shape == .rectEndCap }
+    private var isEndCap: Bool { fitting.shape.singleOpening }
+    private var materialSelection: Binding<FabMaterial> {
+        Binding(get: { fitting.effectiveMaterial(in: area) }, set: { fitting.materialOverride = $0 })
+    }
+    private var gaugeSelection: Binding<FabGauge> {
+        Binding(get: { fitting.effectiveGauge(in: area) }, set: { fitting.gaugeOverride = $0 })
+    }
+    private var customGaugeText: Binding<String> {
+        Binding(get: {
+            fitting.gaugeOverride == nil ? (area?.customGauge ?? "") : (fitting.customGaugeOverride ?? "")
+        }, set: { fitting.customGaugeOverride = $0 })
+    }
+    private var elbowFabricationSelection: Binding<FabElbowFabrication> {
+        Binding(get: { fitting.fabricationType }, set: { fitting.elbowFabrication = $0 })
+    }
+    private var radiusFactorSelection: Binding<FabRadiusFactor> {
+        Binding(get: { fitting.radiusFactor }, set: { fitting.elbowRadiusFactor = $0 })
+    }
+    private var reducerAlignmentSelection: Binding<FabReducerAlignment> {
+        Binding(get: { fitting.reducerMode }, set: { fitting.reducerAlignment = $0 })
+    }
+    private var reducerInletCollarSelection: Binding<FabHetoLengthMode> {
+        Binding(get: { fitting.reducerInletMode }, set: {
+            fitting.reducerInletCollarMode = $0
+            fitting.syncReducerOverallLength()
+        })
+    }
+    private var reducerOutletCollarSelection: Binding<FabHetoLengthMode> {
+        Binding(get: { fitting.reducerOutletMode }, set: {
+            fitting.reducerOutletCollarMode = $0
+            fitting.syncReducerOverallLength()
+        })
+    }
+    private var reducerInletCustomLength: Binding<Double> {
+        Binding(get: { fitting.reducerInletCollarCustomLength ?? 4 }, set: {
+            fitting.reducerInletCollarCustomLength = $0
+            fitting.syncReducerOverallLength()
+        })
+    }
+    private var reducerOutletCustomLength: Binding<Double> {
+        Binding(get: { fitting.reducerOutletCollarCustomLength ?? 4 }, set: {
+            fitting.reducerOutletCollarCustomLength = $0
+            fitting.syncReducerOverallLength()
+        })
+    }
+    private var reducerCenterBodyLength: Binding<Double> {
+        Binding(get: { fitting.effectiveReducerBodyLength }, set: {
+            fitting.reducerBodyLength = $0
+            fitting.syncReducerOverallLength()
+        })
+    }
+    private var hetoLengthSelection: Binding<FabHetoLengthMode> {
+        Binding(get: { fitting.hetoMode }, set: { fitting.hetoLengthMode = $0 })
+    }
+    private var takeoffCollarSelection: Binding<FabHetoLengthMode> {
+        Binding(get: { fitting.takeoffCollarSelection },
+                set: { fitting.takeoffCollarMode = $0 })
+    }
+    private var takeoffCollarCustom: Binding<Double> {
+        Binding(get: { fitting.takeoffCollarCustomLength ?? 4 },
+                set: { fitting.takeoffCollarCustomLength = $0 })
+    }
+    @ViewBuilder
+    private var takeoffCollarControls: some View {
+        Picker("Round Collar Length", selection: takeoffCollarSelection) {
+            Text("Standard — 4″").tag(FabHetoLengthMode.standard)
+            Text("Custom").tag(FabHetoLengthMode.custom)
+        }
+        if fitting.takeoffCollarSelection == .custom {
+            number("Round Collar — Custom Length", takeoffCollarCustom)
+        }
+    }
     private var teeE: Binding<Double> { Binding(get: { fitting.teeE }, set: { fitting.teeRightWidth = $0 }) }
     private var teeF: Binding<Double> { Binding(get: { fitting.teeF }, set: { fitting.teeRightDepth = $0 }) }
     private var teeG: Binding<Double> { Binding(get: { fitting.teeG }, set: { fitting.teeThroatG = $0 }) }
@@ -413,11 +523,15 @@ struct FabFittingEditor: View {
     private var damper: Binding<Bool> {
         Binding(get: { fitting.isDampered }, set: { fitting.hasDamper = $0 })
     }
+    private var turningVanes: Binding<Bool> {
+        Binding(get: { fitting.hasTurningVanes },
+                set: { fitting.showTurningVanes = $0 })
+    }
     private var diameterInput: Binding<Double> {
         Binding(get: { fitting.inletWidth }, set: { newValue in
             fitting.inletWidth = newValue
             fitting.inletHeight = newValue
-            if fitting.shape.isRoundElbow || fitting.shape == .roundStraight {
+            if fitting.shape.isRoundElbow || fitting.shape == .roundStraight || fitting.shape.isRoundSpiral {
                 fitting.outletWidth = newValue
                 fitting.outletHeight = newValue
             }
@@ -435,6 +549,20 @@ struct FabFittingEditor: View {
             if fitting.shape == .rectStraight { fitting.outletHeight = newValue }
         })
     }
+    private var elbowAngleMode: Binding<String> {
+        Binding(get: {
+            fitting.angleIsCustom ? "Custom" : (fitting.shape == .roundElbow45 ? "45°" : "90°")
+        }, set: { selected in
+            if selected == "Custom" {
+                fitting.elbowAngleCustom = true
+                if fitting.angle <= 0 { fitting.angle = 90 }
+            } else {
+                fitting.elbowAngleCustom = false
+                fitting.shape = selected == "45°" ? .roundElbow45 : .roundElbow90
+                fitting.angle = selected == "45°" ? 45 : 90
+            }
+        })
+    }
     private var elbowAngle: Binding<Int> {
         Binding(get: { fitting.shape == .roundElbow45 ? 45 : 90 }, set: { selected in
             fitting.shape = selected == 45 ? .roundElbow45 : .roundElbow90
@@ -444,22 +572,23 @@ struct FabFittingEditor: View {
         })
     }
     private var inputConnection: Binding<FabConnection> {
-        Binding(get: { isRound ? fitting.inletConnection.normalizedRound : fitting.inletConnection },
+        Binding(get: { (isRound && !fitting.shape.isHeto) ? fitting.inletConnection.normalizedRound : fitting.inletConnection },
                 set: { fitting.inletConnection = $0 })
     }
     private var outputConnection: Binding<FabConnection> {
         Binding(get: { (isRound || fitting.shape == .squareRound) ? fitting.outletConnection.normalizedRound : fitting.outletConnection },
                 set: { fitting.outletConnection = $0 })
     }
-    private func number(_ title: String, _ value: Binding<Double>) -> some View {
+    private func number(_ title: String, _ value: Binding<Double>, unit: String = "in") -> some View {
         HStack {
             Text(title)
             Spacer(minLength: 8)
-            TextField("Inches", value: value, format: .number)
+            TextField(unit == "°" ? "Degrees" : "Inches", value: value, format: .number)
                 .keyboardType(.decimalPad)
+                .focused($dimensionFocused)
                 .multilineTextAlignment(.trailing)
                 .frame(width: 88)
-            Text("in").foregroundColor(.secondary)
+            Text(unit).foregroundColor(.secondary)
         }
     }
     private func matched(_ title: String, value: Double) -> some View {
@@ -474,18 +603,82 @@ struct FabFittingEditor: View {
     private var measurementsAndAlignment: some View {
 Section("Dimensions — Finished Inches") {
     if isRound {
-        number("A — Diameter In", diameterInput)
-        if isRoundElbow || fitting.shape == .roundStraight {
-            matched("C — Diameter Out", value: fitting.inletWidth)
-        } else {
-            number("C — Diameter Out", $fitting.outletWidth)
-        }
         if isRoundElbow {
-            Picker("J — Elbow Angle", selection: elbowAngle) {
-                Text("90°").tag(90)
-                Text("45°").tag(45)
-            }.pickerStyle(.segmented)
+            number("A — Diameter (both ends)", diameterInput)
+            Picker("B — Elbow Angle", selection: elbowAngleMode) {
+                Text("90°").tag("90°")
+                Text("45°").tag("45°")
+                Text("Custom").tag("Custom")
+            }
+            if fitting.angleIsCustom { number("B — Custom Angle", $fitting.angle, unit: "°") }
+            Picker("Fabrication", selection: elbowFabricationSelection) {
+                ForEach(FabElbowFabrication.allCases) { Text($0.rawValue).tag($0) }
+            }
+            Picker("Radius Factor", selection: radiusFactorSelection) {
+                ForEach(FabRadiusFactor.allCases) { Text($0.displayName).tag($0) }
+            }
+        } else if fitting.shape.isRoundReducer {
+            number("A — Diameter In", diameterInput)
+            number("B — Diameter Out", $fitting.outletWidth)
+            Picker("Inlet Collar Length", selection: reducerInletCollarSelection) {
+                Text("Standard — 4″").tag(FabHetoLengthMode.standard)
+                Text("Custom").tag(FabHetoLengthMode.custom)
+            }
+            if fitting.reducerInletMode == .custom {
+                number("Inlet Collar — Custom Length", reducerInletCustomLength)
+            }
+            Picker("Outlet Collar Length", selection: reducerOutletCollarSelection) {
+                Text("Standard — 4″").tag(FabHetoLengthMode.standard)
+                Text("Custom").tag(FabHetoLengthMode.custom)
+            }
+            if fitting.reducerOutletMode == .custom {
+                number("Outlet Collar — Custom Length", reducerOutletCustomLength)
+            }
+            number("Center Body Length", reducerCenterBodyLength)
+            HStack {
+                Text("C — Overall Length")
+                Spacer()
+                Text(fabInches(fitting.reducerOverallLength))
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+            }
+            Text("Overall = inlet collar + center body + outlet collar.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Picker("Offset", selection: reducerAlignmentSelection) {
+                ForEach(FabReducerAlignment.allCases) { Text($0.rawValue).tag($0) }
+            }
+            if fitting.reducerMode == .flatTop {
+                Text("Flat Top: top edges stay aligned. Centerline shift is half the diameter difference.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+        } else if fitting.shape.isHeto {
+            number("A — Rectangular Width", $fitting.inletWidth)
+            number("B — Rectangular Depth", $fitting.inletHeight)
+            number("C — Round Diameter", $fitting.outletWidth)
+            takeoffCollarControls
+            Picker("D — Length", selection: hetoLengthSelection) {
+                ForEach(FabHetoLengthMode.allCases) { Text($0.rawValue).tag($0) }
+            }
+            if fitting.needsCustomLength {
+                number("D — Custom Length", $fitting.length)
+            } else {
+                Text("D — STANDARD (determined by opening sizes)")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+        } else if fitting.shape.isRoundSpiral {
+            number("A — Pipe Length", $fitting.length)
+            number("B — Diameter (both ends)", diameterInput)
+        } else if fitting.shape.isRoundEndCap {
+            number("A — Diameter", diameterInput)
         } else {
+            // Legacy round parts remain editable in pre-V4 saved jobs.
+            number("A — Diameter In", diameterInput)
+            if fitting.shape == .roundStraight {
+                matched("C — Diameter Out", value: fitting.inletWidth)
+            } else {
+                number("C — Diameter Out", $fitting.outletWidth)
+            }
             number("E — Overall Length", $fitting.length)
             if !fitting.shape.isStraight {
                 number("K — Straight In", $fitting.straightIn)
@@ -493,7 +686,7 @@ Section("Dimensions — Finished Inches") {
             }
             if fitting.shape == .roundTee {
                 number("M — Branch Diameter", $fitting.branchDiameter)
-                number("J — Lateral Angle", $fitting.angle)
+                number("J — Lateral Angle", $fitting.angle, unit: "°")
             }
         }
     } else {
@@ -506,6 +699,7 @@ Section("Dimensions — Finished Inches") {
             number("E — Overall Length", $fitting.length)
         } else if fitting.shape == .squareRound {
             number("C — Round Diameter", $fitting.outletWidth)
+            takeoffCollarControls
             number("D — Overall Length", $fitting.length)
         } else if isTee {
             number("C — Left Width", $fitting.outletWidth)
@@ -516,13 +710,25 @@ Section("Dimensions — Finished Inches") {
             number("H — Lower Left Throat", teeH)
             number("I — Lower Right Throat", teeI)
             number("J — Upper Right Throat", teeJ)
+            Picker("Turning Vanes", selection: turningVanes) {
+                Text("Vanes").tag(true)
+                Text("No Vanes").tag(false)
+            }
         } else {
             number("C — Width Out", $fitting.outletWidth)
             number("D — Depth Out", $fitting.outletHeight)
             if isSquareElbow {
                 number("E — Throat Length 1", $fitting.straightIn)
                 number("F — Throat Length 2", $fitting.straightOut)
+                Picker("Turning Vanes", selection: turningVanes) {
+                    Text("Vanes").tag(true)
+                    Text("No Vanes").tag(false)
+                }
             } else if fitting.shape == .rectRadiusElbow {
+                Picker("Turning Vanes", selection: turningVanes) {
+                    Text("Vanes").tag(true)
+                    Text("No Vanes").tag(false)
+                }
                 number("E — Full Interior Radius", $fitting.radius)
                 number("F — Top Shift (+up / -down)", $fitting.verticalValue)
                 Text("Top and bottom shift together. Specify flat top/bottom in Notes.")
@@ -541,7 +747,7 @@ Section("Dimensions — Finished Inches") {
 }
 if isTransition {
     Section("Transition Side Reductions — Linked") {
-        Text("Starts centered. Editing any side recalculates the opposite side automatically.")
+        Text("Starts centered. Top and Bottom show signed edge movement: + up, − down. Editing one recalculates the other.")
             .font(.caption).foregroundColor(.secondary)
         number("Left", Binding(get: { fitting.transitionLeft }, set: {
             fitting.setTransitionLeft($0); customizedTransition = true
@@ -549,10 +755,10 @@ if isTransition {
         number("Right", Binding(get: { fitting.transitionRight }, set: {
             fitting.setTransitionRight($0); customizedTransition = true
         }))
-        number("Top", Binding(get: { fitting.transitionTop }, set: {
+        number("Top (up + / down −)", Binding(get: { fitting.transitionTop }, set: {
             fitting.setTransitionTop($0); customizedTransition = true
         }))
-        number("Bottom", Binding(get: { fitting.transitionBottom }, set: {
+        number("Bottom (up + / down −)", Binding(get: { fitting.transitionBottom }, set: {
             fitting.setTransitionBottom($0); customizedTransition = true
         }))
         Button("Reset to Centerline") {
@@ -561,7 +767,7 @@ if isTransition {
         Text(customizedTransition ? "Custom alignment" : "Centered alignment")
             .font(.caption).foregroundColor(.secondary)
     }
-} else if fitting.shape.isTransition && fitting.shape != .squareRound {
+} else if fitting.shape.isTransition && fitting.shape != .squareRound && !fitting.shape.isCatalogRound {
     // Retain legacy offset controls for previously saved V2 offsets.
     Section("Legacy Alignment and Offsets") {
         Picker("Vertical", selection: $fitting.verticalAlignment) {
@@ -578,20 +784,25 @@ if isTransition {
     @ViewBuilder
     private var connectorSection: some View {
 Section("Connections") {
-    let inletLabel = isTee ? "Bottom (A × B)" : (fitting.shape == .squareRound ? "Rectangular (A × B)" : "Connection In")
+    let inletLabel = isTee ? "Bottom (A × B)" :
+        ((fitting.shape == .squareRound || fitting.shape.isHeto) ? "Rectangular (A × B)" :
+         (isEndCap ? "Open End Connection" : "Connection In"))
     Picker(inletLabel, selection: inputConnection) {
         ForEach(inConnections) { Text($0.rawValue).tag($0) }
     }
     if inputConnection.wrappedValue == .custom || inputConnection.wrappedValue == .special {
         TextField("Custom inlet connection", text: $fitting.inletSpecial)
+            .focused($dimensionFocused)
     }
     if !isEndCap {
-        let outletLabel = isTee ? "Left (C × D)" : (fitting.shape == .squareRound ? "Round (C)" : "Connection Out")
+        let outletLabel = isTee ? "Left (C × D)" :
+            ((fitting.shape == .squareRound || fitting.shape.isHeto) ? "Round (C)" : "Connection Out")
         Picker(outletLabel, selection: outputConnection) {
             ForEach(outConnections) { Text($0.rawValue).tag($0) }
         }
         if outputConnection.wrappedValue == .custom || outputConnection.wrappedValue == .special {
             TextField("Custom outlet connection", text: $fitting.outletSpecial)
+                .focused($dimensionFocused)
         }
     }
     if isTee {
@@ -600,23 +811,64 @@ Section("Connections") {
         }
         if teeRightConnection.wrappedValue == .custom || teeRightConnection.wrappedValue == .special {
             TextField("Custom right connection", text: teeRightSpecial)
+                .focused($dimensionFocused)
         }
     }
-    if fitting.shape == .squareRound {
+    if fitting.shape == .squareRound || fitting.shape.isHeto {
         Toggle("Include damper", isOn: damper)
     }
 }
+    }
+    @ViewBuilder
+    private var materialAndGauge: some View {
+        Section("Material & Gauge") {
+            Toggle("Override area material", isOn: Binding(
+                get: { fitting.materialOverride != nil },
+                set: { useOverride in
+                    fitting.materialOverride = useOverride ? fitting.effectiveMaterial(in: area) : nil
+                }
+            ))
+            Picker("Material", selection: materialSelection) {
+                ForEach(FabMaterial.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .disabled(fitting.materialOverride == nil && area != nil)
+            Toggle("Override area gauge", isOn: Binding(
+                get: { fitting.gaugeOverride != nil },
+                set: { useOverride in
+                    if useOverride {
+                        let current = fitting.effectiveGauge(in: area)
+                        fitting.gaugeOverride = current
+                        if current == .custom { fitting.customGaugeOverride = area?.customGauge }
+                    } else {
+                        fitting.gaugeOverride = nil
+                        fitting.customGaugeOverride = nil
+                    }
+                }
+            ))
+            Picker("Gauge", selection: gaugeSelection) {
+                ForEach(FabGauge.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .disabled(fitting.gaugeOverride == nil && area != nil)
+            if fitting.effectiveGauge(in: area) == .custom {
+                TextField("Custom gauge or thickness", text: customGaugeText)
+                    .focused($dimensionFocused)
+                    .disabled(fitting.gaugeOverride == nil && area != nil)
+            }
+            Text("Effective: \(fitting.effectiveMaterial(in: area).rawValue) · \(fitting.effectiveGaugeLabel(in: area))")
+                .font(.caption).foregroundColor(.secondary)
+        }
     }
     var body: some View {
         Form {
             Section("Fitting") {
                 Text(fitting.shape.displayName).font(.headline)
                 TextField("Fitting label (optional)", text: $fitting.name)
+                    .focused($dimensionFocused)
                 Stepper("Quantity: \(fitting.quantity)", value: $fitting.quantity, in: 1...9999)
             }
             if !fitting.shape.isCustom {
                 Section("Fitting Diagram · Dimension Letters") {
-                    if fitting.shape.isCatalogRect {
+                    if fitting.shape.isCatalogRect || fitting.shape.isCatalogRound {
                         FabDiagramView(fitting: fitting, compact: false)
                             .frame(maxWidth: .infinity)
                     } else {
@@ -626,6 +878,15 @@ Section("Connections") {
                     }
                     Text(fitting.dimensionLegend)
                         .font(.caption).foregroundColor(.secondary)
+                    Button {
+                        dimensionFocused = false
+                        show3DPreview = true
+                    } label: {
+                        Label("View 3D", systemImage: "cube.transparent")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 38)
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
                 measurementsAndAlignment
                 connectorSection
@@ -673,8 +934,11 @@ Section("Connections") {
                     }
                 }
             }
+            materialAndGauge
             Section(fitting.shape.isCustom ? "Describe Custom Fitting (Required)" : "Shop Notes") {
-                TextEditor(text: $fitting.notes).frame(minHeight: 78)
+                TextEditor(text: $fitting.notes)
+                    .focused($dimensionFocused)
+                    .frame(minHeight: 78)
             }
             Section {
                 Text("Dimensions are finished inches; liner and insulation never automatically change the entered measurements. Drawings are labeled schematics, not flat patterns.")
@@ -683,7 +947,15 @@ Section("Connections") {
         }
         .navigationTitle("Fitting Details")
         .navigationBarTitleDisplayMode(.inline)
+        .scrollDismissesKeyboard(.interactively)
         .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button { dimensionFocused = false } label: {
+                    Label("Hide Keyboard", systemImage: "chevron.down")
+                }
+                Button("Done") { dimensionFocused = false }
+            }
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { dismiss() }
             }
@@ -700,8 +972,1130 @@ Section("Connections") {
         .alert("Check Measurements", isPresented: $showError) {
             Button("OK") {}
         } message: { Text(fitting.validationMessage ?? "Please check your fitting.") }
+        .sheet(isPresented: $show3DPreview) {
+            FabReadOnly3DPreview(fitting: fitting)
+        }
     }
 }
+
+// The original FieldFab SceneKit engine already constructs dimension-driven
+// rectangular walls. Adapt only fitting types it can represent correctly.
+// Other fitting types intentionally display an honest unsupported message
+// until their dedicated mesh generators are implemented.
+private struct FabReadOnly3DPreview: View {
+    @Environment(\.dismiss) private var dismiss
+    let fitting: FabFitting
+    @State private var previewAction = 0
+    @State private var previewActionID = 0
+    @State private var showDimensions = true
+
+    private func control(_ action: Int) {
+        previewAction = action
+        previewActionID += 1
+    }
+
+    private var legacyDuct: DuctTransition.DuctData? {
+        guard fitting.shape == .rectStraight || fitting.shape == .rectTransition else { return nil }
+        guard fitting.inletWidth > 0, fitting.inletHeight > 0, fitting.length > 0 else { return nil }
+        var duct = DuctTransition.DuctData()
+        duct.name = fitting.name.isEmpty ? fitting.shape.displayName : fitting.name
+        duct.isTransition = fitting.shape == .rectTransition
+        duct.unit = .inch
+        duct.measurements = [
+            fitting.inletWidth, fitting.inletHeight, fitting.length,
+            fitting.shape == .rectTransition ? fitting.offsetX : 0,
+            fitting.shape == .rectTransition ? fitting.offsetY : 0,
+            fitting.shape == .rectTransition ? fitting.outletWidth : fitting.inletWidth,
+            fitting.shape == .rectTransition ? fitting.outletHeight : fitting.inletHeight
+        ]
+        return duct
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if FabFittingScenePreview.isSupported(fitting.shape) {
+                    GeometryReader { _ in
+                        FabFittingScenePreview(fitting: fitting,
+                                             showDimensions: showDimensions,
+                                             resetID: previewActionID)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        Toggle("Dimensions", isOn: $showDimensions)
+                            .font(.caption)
+                            .padding(10)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                            .padding(12)
+                    }
+                    .overlay(alignment: .bottom) {
+                        VStack(spacing: 10) {
+                            Button { control(3) } label: {
+                                Label("Reset View", systemImage: "arrow.counterclockwise")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.large)
+                            Text("Read-only · Drag to orbit · Pinch to zoom")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(10)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .padding(.bottom, 12)
+                    }
+                } else if let duct = legacyDuct {
+                    GeometryReader { geo in
+                        DuctTransition.SceneView(
+                            geo: geo,
+                            textShown: false,
+                            ductwork: duct,
+                            ductSceneHitTest: { _ in },
+                            selectorShown: .constant(false),
+                            isFabPreview: true,
+                            previewAction: previewAction,
+                            previewActionID: previewActionID,
+                            showFabLabels: showDimensions
+                        )
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        Toggle("Dimensions", isOn: $showDimensions)
+                            .toggleStyle(.switch)
+                            .font(.caption)
+                            .padding(10)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                            .padding(12)
+                    }
+                    .overlay(alignment: .bottom) {
+                        VStack(spacing: 10) {
+                            Button { control(3) } label: {
+                                Label("Reset View", systemImage: "arrow.counterclockwise")
+                            }
+                            .accessibilityLabel("Reset 3D view")
+                            .buttonStyle(.bordered)
+                            .controlSize(.large)
+                            .font(.headline)
+                            Text("Read-only · Drag to orbit · Pinch to zoom")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(10)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 12)
+                    }
+                } else {
+                    VStack(spacing: 14) {
+                        Image(systemName: "cube.transparent")
+                            .font(.system(size: 48))
+                            .foregroundColor(.secondary)
+                        Text("3D Preview Not Yet Available")
+                            .font(.headline)
+                        Text("The 3D mesh generator for \(fitting.shape.displayName) has not been added yet. Your fitting dimensions and 2D drawing are unaffected.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(28)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .navigationTitle("3D · \(fitting.shape.displayName)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+
+ // MARK: - ProMetalsFab dimension-driven, read-only fitting SceneKit previews.
+ // Dimensions are inches in the fitting model; rendering uses meters.
+ private struct FabFittingScenePreview: UIViewRepresentable {
+     let fitting: FabFitting
+     let showDimensions: Bool
+     let resetID: Int
+
+     static func isSupported(_ shape: FabShape) -> Bool {
+         switch shape {
+         case .roundSpiral, .roundStraight, .roundReducer, .roundEccentric,
+              .roundEndCap, .roundElbow45, .roundElbow90, .squareRound,
+              .roundHeto90, .roundHeto45, .rectEndCap, .rectElbow45,
+              .rectElbow90, .rectRadiusElbow, .rectTee: return true
+         default: return false
+         }
+     }
+
+     final class PreviewSceneView: SCNView {
+         var priorResetID = 0
+         var priorLabels = true
+         var initialCameraPosition = SCNVector3Zero
+         var initialCameraTarget = SCNVector3Zero
+     }
+
+     // Billboard anchors face the viewer, while their text rotates *within*
+     // the screen plane to follow the projected measurement direction.
+     final class Coordinator: NSObject, SCNSceneRendererDelegate {
+         func renderer(_ renderer: any SCNSceneRenderer, updateAtTime time: TimeInterval) {
+             guard let view = renderer as? SCNView,
+                   let camera = view.pointOfView,
+                   let scene = view.scene else { return }
+             scene.rootNode.enumerateChildNodes { node, _ in
+                 guard node.name == "roundDimensionLabel",
+                       let dx = node.value(forKey: "dimensionDX") as? NSNumber,
+                       let dy = node.value(forKey: "dimensionDY") as? NSNumber,
+                       let dz = node.value(forKey: "dimensionDZ") as? NSNumber,
+                       let text = node.childNode(withName: "dimensionText", recursively: false) else { return }
+                 let world = SCNVector3(dx.floatValue, dy.floatValue, dz.floatValue)
+                 let local = camera.convertVector(world, from: scene.rootNode)
+                 if local.x*local.x + local.y*local.y > 0.000001 {
+                     var angle = atan2(local.y, local.x)
+                     // Reverse upside-down text to stay readable at all angles.
+                     if angle > Float.pi/2 { angle -= Float.pi }
+                     if angle < -Float.pi/2 { angle += Float.pi }
+                     text.eulerAngles.z = angle
+                 }
+             }
+         }
+     }
+     func makeCoordinator() -> Coordinator { Coordinator() }
+
+     func makeUIView(context: Context) -> PreviewSceneView {
+         let view = PreviewSceneView(frame: .zero)
+         view.allowsCameraControl = true
+         view.autoenablesDefaultLighting = true
+         view.backgroundColor = UIColor.secondarySystemBackground
+         view.antialiasingMode = .multisampling4X
+         view.scene = buildScene()
+         view.delegate = context.coordinator
+         view.isPlaying = true
+         view.priorResetID = resetID
+         view.priorLabels = showDimensions
+         focusCamera(view)
+         return view
+     }
+
+     func updateUIView(_ view: PreviewSceneView, context: Context) {
+         if view.priorLabels != showDimensions {
+             view.priorLabels = showDimensions
+             view.scene?.rootNode.enumerateChildNodes { node, _ in
+                 if node.name == "roundDimensionLabel" {
+                     node.isHidden = !showDimensions
+                 }
+             }
+         }
+         if view.priorResetID != resetID {
+             view.priorResetID = resetID
+             focusCamera(view)
+         }
+     }
+
+     private func focusCamera(_ view: PreviewSceneView) {
+         guard let scene = view.scene,
+               let body = scene.rootNode.childNode(withName: "fitting", recursively: false) else { return }
+         let (low, high) = body.boundingBox
+         let center = SCNVector3((low.x + high.x)/2, (low.y + high.y)/2, (low.z + high.z)/2)
+         let x = high.x-low.x, y = high.y-low.y, z = high.z-low.z
+         let span = max(sqrt(x*x+y*y+z*z), 0.2)
+         let camera = SCNNode()
+         camera.camera = SCNCamera()
+         camera.camera?.zNear = 0.005
+         camera.camera?.zFar = 500
+         camera.position = SCNVector3(center.x + span * 1.25, center.y + span * 0.85, center.z + span * 1.75)
+         camera.look(at: center)
+         scene.rootNode.childNode(withName: "previewCamera", recursively: false)?.removeFromParentNode()
+         camera.name = "previewCamera"
+         scene.rootNode.addChildNode(camera)
+         view.pointOfView = camera
+         view.initialCameraPosition = camera.position
+         view.initialCameraTarget = center
+     }
+
+     private var toMeters: CGFloat { 0.0254 }
+     private func m(_ inches: Double) -> CGFloat { CGFloat(inches) * toMeters }
+     private func dimension(_ inches: Double) -> String {
+         String(format: "%g", inches) + "\u{2033}"
+     }
+     private var metal: SCNMaterial {
+         let material = SCNMaterial()
+         // Match the galvanized finish used by the rectangular 3D engine.
+         material.diffuse.contents = UIImage(named: "galvanized-diffuse")
+             ?? UIColor(red: 0.71, green: 0.75, blue: 0.79, alpha: 1)
+         material.metalness.contents = UIImage(named: "galvanized-metallic") ?? 0.5
+         material.normal.contents = UIImage(named: "galvanized-normal")
+         material.roughness.contents = UIImage(named: "galvanized-roughness") ?? 0.42
+         material.lightingModel = .physicallyBased
+         material.isDoubleSided = true
+         return material
+     }
+
+     private func addLabel(_ title: String, at position: SCNVector3,
+                           to root: SCNNode, scale: Float,
+                           direction: SCNVector3 = SCNVector3(1,0,0)) {
+         let geometry = SCNText(string: title, extrusionDepth: 0)
+         geometry.font = UIFont.boldSystemFont(ofSize: 1)
+         geometry.flatness = 0.07
+         let material = SCNMaterial()
+         material.diffuse.contents = UIColor.systemYellow
+         material.lightingModel = .constant
+         material.isDoubleSided = true
+         material.readsFromDepthBuffer = false
+         material.writesToDepthBuffer = false
+         geometry.materials = [material]
+         let anchor = SCNNode()
+         anchor.name = "roundDimensionLabel"
+         anchor.isHidden = !showDimensions
+         anchor.position = position
+         anchor.renderingOrder = 250
+         anchor.constraints = [SCNBillboardConstraint()]
+         anchor.setValue(NSNumber(value: direction.x), forKey: "dimensionDX")
+         anchor.setValue(NSNumber(value: direction.y), forKey: "dimensionDY")
+         anchor.setValue(NSNumber(value: direction.z), forKey: "dimensionDZ")
+         let text = SCNNode(geometry: geometry)
+         text.name = "dimensionText"
+         let (low, high) = geometry.boundingBox
+         text.pivot = SCNMatrix4MakeTranslation((low.x + high.x)/2,
+                                                 (low.y + high.y)/2, 0)
+         text.scale = SCNVector3(scale, scale, scale)
+         anchor.addChildNode(text)
+         (root.parent ?? root).addChildNode(anchor)
+     }
+
+     private func addDimension(_ title: String, from start: SCNVector3,
+                               to finish: SCNVector3, offset: SCNVector3,
+                               root: SCNNode, size: Float) {
+         func shifted(_ p: SCNVector3) -> SCNVector3 {
+             SCNVector3(p.x+offset.x, p.y+offset.y, p.z+offset.z)
+         }
+         let a = shifted(start), b = shifted(finish)
+         let labelPosition = SCNVector3((a.x+b.x)/2, (a.y+b.y)/2, (a.z+b.z)/2)
+         let along = SCNVector3(finish.x-start.x, finish.y-start.y,
+                                finish.z-start.z)
+         let lineVertices = [start, a, a, b, b, finish]
+         let src = SCNGeometrySource(vertices: lineVertices)
+         let indices: [UInt32] = [0,1, 2,3, 4,5]
+         let element = SCNGeometryElement(indices: indices, primitiveType: .line)
+         let geometry = SCNGeometry(sources: [src], elements: [element])
+         let lineMaterial = SCNMaterial()
+         lineMaterial.diffuse.contents = UIColor.systemYellow
+         lineMaterial.lightingModel = .constant
+         lineMaterial.isDoubleSided = true
+         lineMaterial.readsFromDepthBuffer = false
+         lineMaterial.writesToDepthBuffer = false
+         geometry.materials = [lineMaterial]
+         let lineNode = SCNNode(geometry: geometry)
+         lineNode.name = "roundDimensionLabel"
+         lineNode.isHidden = !showDimensions
+         lineNode.renderingOrder = 240
+         (root.parent ?? root).addChildNode(lineNode)
+         addLabel(title, at: labelPosition, to: root,
+                  scale: size, direction: along)
+     }
+
+     // Separate planar panels preserve the individual bump-brake facets.
+     // The round collars deliberately continue using smooth mesh().
+     private func panelMesh(rings: [[SCNVector3]]) -> SCNGeometry {
+         guard rings.count > 1, let first = rings.first, first.count > 2 else {
+             return mesh(rings: rings)
+         }
+         let count = first.count
+         var vertices: [SCNVector3] = []
+         var normals: [SCNVector3] = []
+         var uv: [CGPoint] = []
+         var indices: [UInt32] = []
+         for row in 0..<(rings.count-1) {
+             for col in 0..<count {
+                 let next = (col+1)%count
+                 let corners = [rings[row][col], rings[row][next],
+                                rings[row+1][col], rings[row+1][next]]
+                 let a=corners[0], b=corners[1], c=corners[2]
+                 let ux=c.x-a.x, uy=c.y-a.y, uz=c.z-a.z
+                 let vx=b.x-a.x, vy=b.y-a.y, vz=b.z-a.z
+                 let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx
+                 let mag=max(sqrt(nx*nx+ny*ny+nz*nz), Float(0.000001))
+                 let normal=SCNVector3(nx/mag,ny/mag,nz/mag)
+                 let index=UInt32(vertices.count)
+                 vertices.append(contentsOf: corners)
+                 normals.append(contentsOf: [normal,normal,normal,normal])
+                 uv.append(contentsOf: [
+                     CGPoint(x:0,y:0),CGPoint(x:1,y:0),
+                     CGPoint(x:0,y:1),CGPoint(x:1,y:1)
+                 ])
+                 indices.append(contentsOf: [index,index+2,index+1,
+                                             index+1,index+2,index+3])
+             }
+         }
+         let geo=SCNGeometry(sources:[SCNGeometrySource(vertices:vertices),
+                                      SCNGeometrySource(normals:normals),
+                                      SCNGeometrySource(textureCoordinates:uv)],
+                             elements:[SCNGeometryElement(indices:indices, primitiveType:.triangles)])
+         geo.materials=[metal]
+         return geo
+     }
+
+     private func mesh(rings: [[SCNVector3]], closeStart: Bool = false,
+                       closeEnd: Bool = false) -> SCNGeometry {
+         let count = rings[0].count
+         let points = rings.flatMap { $0 }
+         var indices: [UInt32] = []
+         if rings.count >= 2 {
+             for row in 0..<(rings.count - 1) {
+                 for col in 0..<count {
+                     let next = (col + 1) % count
+                     let a = UInt32(row * count + col)
+                     let b = UInt32(row * count + next)
+                     let c = UInt32((row + 1) * count + col)
+                     let d = UInt32((row + 1) * count + next)
+                     indices.append(contentsOf: [a,c,b,b,c,d])
+                 }
+             }
+         }
+         var vertices = points
+         if closeStart {
+             let center = average(rings[0])
+             let idx = UInt32(vertices.count)
+             vertices.append(center)
+             for col in 0..<count {
+                 indices.append(contentsOf: [idx, UInt32((col+1)%count), UInt32(col)])
+             }
+         }
+         if closeEnd {
+             let center = average(rings[rings.count-1])
+             let idx = UInt32(vertices.count)
+             vertices.append(center)
+             let base = UInt32((rings.count-1)*count)
+             for col in 0..<count {
+                 indices.append(contentsOf: [idx,base+UInt32(col),base+UInt32((col+1)%count)])
+             }
+         }
+         // Smooth explicit vertex normals eliminate visible triangulation
+         // artifacts without drawing break or segment lines on the shell.
+         var normals: [SCNVector3] = []
+         var texcoords: [CGPoint] = []
+         for row in 0..<rings.count {
+             for col in 0..<count {
+                 let prev = rings[row][(col + count - 1) % count]
+                 let next = rings[row][(col + 1) % count]
+                 let lower = rings[max(0, row - 1)][col]
+                 let upper = rings[min(rings.count - 1, row + 1)][col]
+                 let ux = next.x - prev.x, uy = next.y - prev.y, uz = next.z - prev.z
+                 let vx = upper.x - lower.x, vy = upper.y - lower.y, vz = upper.z - lower.z
+                 let nx = vy * uz - vz * uy
+                 let ny = vz * ux - vx * uz
+                 let nz = vx * uy - vy * ux
+                 let mag = max(sqrt(nx * nx + ny * ny + nz * nz), Float(0.00001))
+                 normals.append(SCNVector3(nx / mag, ny / mag, nz / mag))
+                 texcoords.append(CGPoint(x: CGFloat(col) / CGFloat(count),
+                                        y: CGFloat(row) / CGFloat(max(1, rings.count - 1))))
+             }
+         }
+         if closeStart {
+             normals.append(SCNVector3(0, -1, 0))
+             texcoords.append(CGPoint(x: 0.5, y: 0))
+         }
+         if closeEnd {
+             normals.append(SCNVector3(0, 1, 0))
+             texcoords.append(CGPoint(x: 0.5, y: 1))
+         }
+         let vData = vertices.withUnsafeBufferPointer { Data(buffer: $0) }
+         let iData = indices.withUnsafeBufferPointer { Data(buffer: $0) }
+         let source = SCNGeometrySource(data: vData, semantic: .vertex,
+                                       vectorCount: vertices.count,
+                                       usesFloatComponents: true,
+                                       componentsPerVector: 3,
+                                       bytesPerComponent: MemoryLayout<Float>.size,
+                                       dataOffset: 0,
+                                       dataStride: MemoryLayout<SCNVector3>.stride)
+         let element = SCNGeometryElement(data: iData, primitiveType: .triangles,
+                                          primitiveCount: indices.count/3,
+                                          bytesPerIndex: MemoryLayout<UInt32>.size)
+         let geo = SCNGeometry(sources: [source,
+                                         SCNGeometrySource(normals: normals),
+                                         SCNGeometrySource(textureCoordinates: texcoords)],
+                               elements: [element])
+         geo.materials = [metal]
+         return geo
+     }
+     private func average(_ points: [SCNVector3]) -> SCNVector3 {
+         let n = Float(points.count)
+         return SCNVector3(points.reduce(Float(0)) { $0+$1.x }/n,
+                           points.reduce(Float(0)) { $0+$1.y }/n,
+                           points.reduce(Float(0)) { $0+$1.z }/n)
+     }
+     private func circularRing(radius: Float, y: Float, shiftX: Float = 0,
+                               shiftZ: Float = 0, sides: Int = 64) -> [SCNVector3] {
+         (0..<sides).map { index in
+             let angle = Float(index)*2*Float.pi/Float(sides)
+             return SCNVector3(shiftX+radius*cos(angle), y, shiftZ+radius*sin(angle))
+         }
+     }
+
+     // Explicitly sample each rectangular corner. Both rims use IDENTICAL
+     // angular stations so A x B is exact, C stays circular, and the loft
+     // does not introduce a twist or round off the rectangular corners.
+     private func squareRoundAngles(halfWidth: Float, halfDepth: Float) -> [Float] {
+         let corner = atan2(halfDepth, halfWidth)
+         let quarter = Float.pi / 2
+         var angles: [Float] = []
+         for quadrant in 0..<4 {
+             let base = Float(quadrant) * quarter
+             // A non-square rectangle has alternating corner angles.
+             let quadrantCorner = quadrant % 2 == 0 ? corner : quarter - corner
+             for segment in 0..<16 {
+                 let t = Float(segment)
+                 let local = segment < 8
+                     ? quadrantCorner * t / 8
+                     : quadrantCorner + (quarter - quadrantCorner) * (t - 8) / 8
+                 angles.append(base + local)
+             }
+         }
+         return angles
+     }
+
+     // Shop-shaped square/rectangular mounting mouth to a round outlet.
+     // The angular stations are shared at both ends so corners remain exact,
+     // while the flat-shaded sheet-metal panels read as bump-brake facets.
+     private func formedTransitionRings(halfWidth: Float, halfDepth: Float,
+                                        outletRadius: Float, bottom: Float, shoulder: Float,
+                                        outletShiftX: Float = 0,
+                                        tilt: Float = 0) -> [[SCNVector3]] {
+         let angles = squareRoundAngles(halfWidth: halfWidth, halfDepth: halfDepth)
+         let rectangle = angles.map { phi -> SCNVector3 in
+             let x=cos(phi), z=sin(phi)
+             let rx=abs(x)>0.00001 ? halfWidth/abs(x) : Float.greatestFiniteMagnitude
+             let rz=abs(z)>0.00001 ? halfDepth/abs(z) : Float.greatestFiniteMagnitude
+             let r=min(rx,rz)
+             return SCNVector3(r*x, bottom, r*z)
+         }
+         let round = angles.map { phi -> SCNVector3 in
+             let radial=outletRadius*cos(phi)
+             return SCNVector3(outletShiftX + radial*cos(tilt),
+                               shoulder - radial*sin(tilt),
+                               outletRadius*sin(phi))
+         }
+         return [rectangle,round]
+     }
+     private func collarExit(for ring: [SCNVector3], length: Float,
+                             tilt: Float = 0) -> [SCNVector3] {
+         ring.map { p in
+             SCNVector3(p.x + length*sin(tilt), p.y + length*cos(tilt), p.z)
+         }
+     }
+
+
+     // Slightly raised circumferential joint marking the end of a rolled collar.
+     private func addCollarSeam(at ring: [SCNVector3], to root: SCNNode) {
+         guard ring.count > 2 else { return }
+         let center = average(ring)
+         let clearance = Float(m(0.025))
+         let vertices = ring.map { point -> SCNVector3 in
+             let dx = point.x-center.x, dy = point.y-center.y, dz = point.z-center.z
+             let mag = max(sqrt(dx*dx+dy*dy+dz*dz), Float(0.00001))
+             return SCNVector3(point.x + clearance*dx/mag,
+                               point.y + clearance*dy/mag,
+                               point.z + clearance*dz/mag)
+         }
+         let indices = (0..<ring.count).flatMap { index -> [UInt32] in
+             [UInt32(index), UInt32((index+1) % ring.count)]
+         }
+         let geo = SCNGeometry(sources: [SCNGeometrySource(vertices: vertices)],
+                               elements: [SCNGeometryElement(indices: indices,
+                                                             primitiveType: .line)])
+         let mat = SCNMaterial()
+         mat.diffuse.contents = UIColor(white: 0.67, alpha: 1)
+         mat.lightingModel = .constant
+         mat.writesToDepthBuffer = false
+         geo.materials = [mat]
+         let node = SCNNode(geometry: geo)
+         node.name = "rolledCollarJoint"
+         node.renderingOrder = 50
+         root.addChildNode(node)
+     }
+
+     // Selected longitudinal edges correspond to actual adjoining flat panels.
+     private func addFormedPanelEdges(_ rings: [[SCNVector3]], to root: SCNNode) {
+         guard rings.count == 2, rings[0].count == rings[1].count else { return }
+         let count = rings[0].count
+         let baseCenter = average(rings[0]), topCenter = average(rings[1])
+         let clearance = Float(m(0.012))
+         var vertices: [SCNVector3] = []
+         for i in stride(from: 0, to: count, by: 4) {
+             for (point, center) in [(rings[0][i], baseCenter), (rings[1][i], topCenter)] {
+                 let dx = point.x-center.x, dz = point.z-center.z
+                 let mag = max(sqrt(dx*dx+dz*dz), Float(0.00001))
+                 vertices.append(SCNVector3(point.x+clearance*dx/mag,
+                                            point.y, point.z+clearance*dz/mag))
+             }
+         }
+         var indices: [UInt32] = []
+         for i in 0..<(vertices.count / 2) {
+             indices.append(UInt32(i * 2))
+             indices.append(UInt32(i * 2 + 1))
+         }
+         let geo = SCNGeometry(sources: [SCNGeometrySource(vertices: vertices)],
+                               elements: [SCNGeometryElement(indices: indices,
+                                                             primitiveType: .line)])
+         let mat = SCNMaterial()
+         mat.diffuse.contents = UIColor(white: 0.53, alpha: 1)
+         mat.lightingModel = .constant
+         mat.writesToDepthBuffer = false
+         geo.materials = [mat]
+         let node = SCNNode(geometry: geo)
+         node.name = "formedPanelEdges"
+         node.renderingOrder = 45
+         root.addChildNode(node)
+     }
+
+     // Four real corners for rectangular duct ends; no cosmetic crease lines.
+     private func rectangularEnd(width: Float, depth: Float, y: Float) -> [SCNVector3] {
+         let w = max(width, 0.001) / 2
+         let d = max(depth, 0.001) / 2
+         return [SCNVector3(w, y, d), SCNVector3(-w, y, d),
+                 SCNVector3(-w, y, -d), SCNVector3(w, y, -d)]
+     }
+
+     // A cross-section normal to a bend travelling in the XY plane.
+     private func bentRectangle(x: Float, y: Float, angle: Float,
+                                width: Float, depth: Float,
+                                zShift: Float = 0) -> [SCNVector3] {
+         let w = max(width, 0.001) / 2
+         let d = max(depth, 0.001) / 2
+         let c = cos(angle), si = sin(angle)
+         return [(w,d),(-w,d),(-w,-d),(w,-d)].map { corner in
+             SCNVector3(x + corner.0 * c, y - corner.0 * si,
+                        zShift + corner.1)
+         }
+     }
+
+     // Rectangular branch sleeve whose length runs along the X axis.
+     private func branchEnd(x: Float, width: Float, depth: Float,
+                            centerY: Float = 0) -> [SCNVector3] {
+         let w = max(width, 0.001) / 2
+         let d = max(depth, 0.001) / 2
+         return [SCNVector3(x, centerY+w, d), SCNVector3(x, centerY-w, d),
+                 SCNVector3(x, centerY-w, -d), SCNVector3(x, centerY+w, -d)]
+     }
+
+     // Joined sheet-metal shell (all panels in ONE geometry). Ports on the
+     // left, right, and bottom remain open; no overlapping duct boxes.
+     private func quadsMesh(_ quads: [[SCNVector3]]) -> SCNGeometry {
+         var vertices: [SCNVector3]=[]
+         var normals: [SCNVector3]=[]
+         var uv: [CGPoint]=[]
+         var indices: [UInt32]=[]
+         for quad in quads where quad.count==4 {
+             let a=quad[0], b=quad[1], c=quad[2]
+             let u=SCNVector3(b.x-a.x,b.y-a.y,b.z-a.z)
+             let v=SCNVector3(c.x-a.x,c.y-a.y,c.z-a.z)
+             let n=SCNVector3(u.y*v.z-u.z*v.y,
+                              u.z*v.x-u.x*v.z,
+                              u.x*v.y-u.y*v.x)
+             let mag=max(sqrt(n.x*n.x+n.y*n.y+n.z*n.z),Float(0.000001))
+             let normal=SCNVector3(n.x/mag,n.y/mag,n.z/mag)
+             let base=UInt32(vertices.count)
+             vertices.append(contentsOf:quad)
+             normals.append(contentsOf:[normal,normal,normal,normal])
+             uv.append(contentsOf:[CGPoint(x:0,y:0),CGPoint(x:1,y:0),
+                                   CGPoint(x:0,y:1),CGPoint(x:1,y:1)])
+             indices.append(contentsOf:[base,base+1,base+2,
+                                        base+1,base+3,base+2])
+         }
+         let geo=SCNGeometry(sources:[SCNGeometrySource(vertices:vertices),
+                                      SCNGeometrySource(normals:normals),
+                                      SCNGeometrySource(textureCoordinates:uv)],
+                             elements:[SCNGeometryElement(indices:indices,primitiveType:.triangles)])
+         geo.materials=[metal]
+         return geo
+     }
+
+     private func addTee(to body: SCNNode, labelOffset: Float,
+                         labelSize: Float) {
+         let a=max(Float(m(fitting.inletWidth)),0.001)
+         let b=max(Float(m(fitting.inletHeight)),0.001)
+         let c=max(Float(m(fitting.outletWidth)),0.001)
+         let d=max(Float(m(fitting.outletHeight)),0.001)
+         let e=max(Float(m(fitting.teeE)),0.001)
+         let f=max(Float(m(fitting.teeF)),0.001)
+         let leftRun=max(Float(m(fitting.teeG+fitting.teeH)),Float(m(6)))
+         let rightRun=max(Float(m(fitting.teeI+fitting.teeJ)),Float(m(6)))
+         let xL = -a/2-leftRun
+         let xR = a/2+rightRun
+         let top=max(c,e)*0.6
+         let leftLow=top-c
+         let rightLow=top-e
+         let bottom=min(leftLow,rightLow)-max(a*0.55,Float(m(6)))
+         let depth=max(b,max(d,f))
+         let halfDepth=depth/2
+         var quads: [[SCNVector3]]=[]
+         func face(_ l: Float,_ r: Float,_ lo: Float,_ hi: Float,_ z: Float) {
+             quads.append([SCNVector3(l,lo,z),SCNVector3(r,lo,z),
+                           SCNVector3(l,hi,z),SCNVector3(r,hi,z)])
+         }
+         for z in [-halfDepth,halfDepth] {
+             face(xL,-a/2,leftLow,top,z)
+             face(-a/2,a/2,bottom,top,z)
+             face(a/2,xR,rightLow,top,z)
+         }
+         // Only outside boundaries are enclosed. Three port edges stay open.
+         let outline: [(Float,Float)]=[
+             (xL,top),(xR,top),(xR,rightLow),(a/2,rightLow),
+             (a/2,bottom),(-a/2,bottom),(-a/2,leftLow),(xL,leftLow)
+         ]
+         for i in outline.indices {
+             let a0=outline[i], a1=outline[(i+1)%outline.count]
+             // Do not close the two horizontal branches or the bottom inlet.
+             if i==1 || i==4 || i==7 { continue }
+             quads.append([SCNVector3(a0.0,a0.1,-halfDepth),
+                           SCNVector3(a1.0,a1.1,-halfDepth),
+                           SCNVector3(a0.0,a0.1,halfDepth),
+                           SCNVector3(a1.0,a1.1,halfDepth)])
+         }
+         body.addChildNode(SCNNode(geometry:quadsMesh(quads)))
+
+         // Curved airflow guides follow the paths on the approved 2D tee
+         // drawing. Vanes are separate internal sheets, not body crease lines.
+         if fitting.hasTurningVanes {
+             var blades: [[SCNVector3]]=[]
+             for n in 0..<5 {
+                 let t=Float(n+1)/6
+                 for side in [-1,1] {
+                     let left=side<0
+                     let outerX=left ? xL : xR
+                     let opening=left ? c : e
+                     let low=left ? leftLow : rightLow
+                     let startY=low+opening*t
+                     let targetX=(left ? -1:1)*a*(0.06+0.27*t)
+                     let endY=bottom+a*(0.18+0.25*t)
+                     let arcX=(outerX+targetX)*0.55
+                     let arcY=max(startY,endY)*0.78+min(startY,endY)*0.22
+                     func curved(_ u: Float)->SCNVector3 {
+                         let v=1-u
+                         return SCNVector3(v*v*outerX+2*v*u*arcX+u*u*targetX,
+                                           v*v*startY+2*v*u*arcY+u*u*endY,0)
+                     }
+                     for seg in 0..<12 {
+                         let p=curved(Float(seg)/12)
+                         let q=curved(Float(seg+1)/12)
+                         let z=halfDepth*0.72
+                         blades.append([SCNVector3(p.x,p.y,-z),
+                                        SCNVector3(q.x,q.y,-z),
+                                        SCNVector3(p.x,p.y,z),
+                                        SCNVector3(q.x,q.y,z)])
+                     }
+                 }
+             }
+             let vaneNode=SCNNode(geometry:quadsMesh(blades))
+             vaneNode.name="turningVanes"
+             body.addChildNode(vaneNode)
+         }
+         let gap=max(Float(m(0.75)),labelOffset*0.25)
+         addDimension("A  "+dimension(fitting.inletWidth),
+                      from:SCNVector3(-a/2,bottom,halfDepth),
+                      to:SCNVector3(a/2,bottom,halfDepth),
+                      offset:SCNVector3(0,-gap,0),root:body,size:labelSize*0.7)
+         addDimension("B  "+dimension(fitting.inletHeight),
+                      from:SCNVector3(a/2,bottom,-halfDepth),
+                      to:SCNVector3(a/2,bottom,halfDepth),
+                      offset:SCNVector3(gap,-gap,0),root:body,size:labelSize*0.7)
+         addDimension("C  "+dimension(fitting.outletWidth),
+                      from:SCNVector3(xL,leftLow,halfDepth),
+                      to:SCNVector3(xL,top,halfDepth),
+                      offset:SCNVector3(-gap,0,0),root:body,size:labelSize*0.7)
+         addDimension("D  "+dimension(fitting.outletHeight),
+                      from:SCNVector3(xL,top,-halfDepth),
+                      to:SCNVector3(xL,top,halfDepth),
+                      offset:SCNVector3(-gap,gap,0),root:body,size:labelSize*0.7)
+         addDimension("E  "+dimension(fitting.teeE),
+                      from:SCNVector3(xR,rightLow,halfDepth),
+                      to:SCNVector3(xR,top,halfDepth),
+                      offset:SCNVector3(gap,0,0),root:body,size:labelSize*0.7)
+         addDimension("F  "+dimension(fitting.teeF),
+                      from:SCNVector3(xR,top,-halfDepth),
+                      to:SCNVector3(xR,top,halfDepth),
+                      offset:SCNVector3(gap,gap,0),root:body,size:labelSize*0.7)
+         addDimension("G  "+dimension(fitting.teeG),
+                      from:SCNVector3(xL,top,halfDepth),
+                      to:SCNVector3(-a/2,top,halfDepth),
+                      offset:SCNVector3(0,gap,0),root:body,size:labelSize*0.6)
+         addDimension("H  "+dimension(fitting.teeH),
+                      from:SCNVector3(xL,leftLow,halfDepth),
+                      to:SCNVector3(-a/2,leftLow,halfDepth),
+                      offset:SCNVector3(0,-gap*0.65,0),root:body,size:labelSize*0.6)
+         addDimension("I  "+dimension(fitting.teeI),
+                      from:SCNVector3(a/2,rightLow,halfDepth),
+                      to:SCNVector3(xR,rightLow,halfDepth),
+                      offset:SCNVector3(0,-gap*0.65,0),root:body,size:labelSize*0.6)
+         addDimension("J  "+dimension(fitting.teeJ),
+                      from:SCNVector3(a/2,top,halfDepth),
+                      to:SCNVector3(xR,top,halfDepth),
+                      offset:SCNVector3(0,gap,0),root:body,size:labelSize*0.6)
+     }
+
+     private func buildScene() -> SCNScene {
+         let scene = SCNScene()
+         let body = SCNNode()
+         body.name = "fitting"
+         scene.rootNode.addChildNode(body)
+         let diameter = max(Float(m(fitting.inletWidth)), 0.001)
+         let radius = diameter/2
+         let labelOffset = max(diameter*0.25, Float(m(1.25)))
+         let labelSize = max(min(diameter*0.09, Float(m(2))), Float(m(0.55)))
+         switch fitting.shape {
+         case .roundStraight, .roundSpiral:
+             let length = max(Float(m(fitting.length)), 0.001)
+             let geo = mesh(rings: [circularRing(radius: radius, y: -length/2),
+                                    circularRing(radius: radius, y: length/2)])
+             body.addChildNode(SCNNode(geometry: geo))
+             addLabel("A  " + dimension(fitting.length), at: SCNVector3(radius+labelOffset, 0, 0), to: body, scale: labelSize)
+             addLabel("B  " + dimension(fitting.inletWidth), at: SCNVector3(0, -length/2, radius+labelOffset/2), to: body, scale: labelSize)
+         case .squareRound, .roundHeto90, .roundHeto45:
+             // CAD references: a square/rectangular mounting mouth, angular
+             // bump-braked transition body, and a separate 4" rolled collar.
+             // HETO 90 is an eccentric takeoff with an upright collar; 45 HETO
+             // tilts the collar and its attachment mouth by 45 degrees.
+             let a=max(Float(m(fitting.inletWidth)), 0.001)
+             let b=max(Float(m(fitting.inletHeight)), 0.001)
+             let c=max(Float(m(fitting.outletWidth)), 0.001)
+             let r=c/2
+             let collar=max(Float(m(fitting.takeoffCollarLength)),0.001)
+             let heto=fitting.shape.isHeto
+             let angled=fitting.shape == .roundHeto45
+             let tilt=angled ? Float.pi/4 : Float(0)
+             let baseHalf=a/2
+             let shiftX=heto ? baseHalf-r : Float(0)
+             // Custom D is total height from rectangular mouth to highest
+             // round-collar edge, NOT the transition-only developed length.
+             let collarVertical=collar*cos(tilt) + r*abs(sin(tilt))
+             let defaultTotal=max(a,max(b,c))*0.9 + collarVertical
+             let requested=heto && fitting.hetoMode == .standard
+                 ? defaultTotal : Float(m(fitting.length))
+             let total=max(requested,collarVertical+0.004)
+             let bodyHeight=max(total-collarVertical,0.004)
+             // On 45° HETO the whole transition advances sideways by the
+             // same amount it rises, keeping body and collar on one axis.
+             let shoulderX=shiftX+(angled ? bodyHeight : 0)
+             let bottom = -total / 2
+             let shoulder=bottom+bodyHeight
+             let rings=formedTransitionRings(halfWidth:a/2, halfDepth:b/2,
+                                              outletRadius:r, bottom:bottom,
+                                              shoulder:shoulder, outletShiftX:shoulderX,
+                                              tilt:tilt)
+             body.addChildNode(SCNNode(geometry: panelMesh(rings:rings)))
+             addFormedPanelEdges(rings, to: body)
+             let endRing=collarExit(for:rings[1],length:collar,tilt:tilt)
+             body.addChildNode(SCNNode(geometry: mesh(rings:[rings[1],endRing])))
+             addCollarSeam(at: rings[1], to: body)
+             // A shallow rectangular return around the mounting mouth. It
+             // remains a connected visual sheet, not a second duct fitting.
+             let lip=Float(m(0.375))
+             let outerRing=formedTransitionRings(halfWidth:a/2+lip,
+                                                  halfDepth:b/2+lip,
+                                                  outletRadius:r,
+                                                  bottom:bottom,shoulder:shoulder,
+                                                  outletShiftX:shoulderX,tilt:tilt)[0]
+             body.addChildNode(SCNNode(geometry: panelMesh(rings:[rings[0],outerRing])))
+             if heto && fitting.isDampered {
+                 let blade=SCNCylinder(radius: CGFloat(r*0.9),
+                                      height: CGFloat(max(r*0.025,0.001)))
+                 let bladeMaterial=SCNMaterial()
+                 bladeMaterial.diffuse.contents=UIColor.darkGray
+                 bladeMaterial.metalness.contents=0.8
+                 bladeMaterial.isDoubleSided=true
+                 blade.materials=[bladeMaterial]
+                 let bladeNode=SCNNode(geometry:blade)
+                 let p=endRing[0]
+                 bladeNode.position=SCNVector3(shoulderX+collar*0.5*sin(tilt),
+                                               shoulder+collar*0.5*cos(tilt),0)
+                 bladeNode.eulerAngles.z = -tilt
+                 body.addChildNode(bladeNode)
+                 _ = p
+             }
+             let dimensionDistance=max(Float(m(1)),max(a,b)*0.13)
+             addDimension("A  "+dimension(fitting.inletWidth),
+                          from:SCNVector3(-a/2,bottom,b/2),
+                          to:SCNVector3(a/2,bottom,b/2),
+                          offset:SCNVector3(0,0,dimensionDistance),
+                          root:body,size:labelSize*0.85)
+             addDimension("B  "+dimension(fitting.inletHeight),
+                          from:SCNVector3(a/2,bottom,-b/2),
+                          to:SCNVector3(a/2,bottom,b/2),
+                          offset:SCNVector3(dimensionDistance,0,0),
+                          root:body,size:labelSize*0.85)
+             let centerX=shoulderX+collar*sin(tilt)
+             let centerY=shoulder+collar*cos(tilt)
+             let cross=SCNVector3(r*cos(tilt),-r*sin(tilt),0)
+             addDimension("C  Ø "+dimension(fitting.outletWidth),
+                          from:SCNVector3(centerX-cross.x,centerY-cross.y,0),
+                          to:SCNVector3(centerX+cross.x,centerY+cross.y,0),
+                          offset:SCNVector3(0,0,r+dimensionDistance),
+                          root:body,size:labelSize*0.85)
+             let lengthLabel=heto && fitting.hetoMode == .standard
+                 ? "D  STANDARD" : "D  "+dimension(fitting.length)
+             addDimension(lengthLabel,
+                          from:SCNVector3(a/2,bottom,0),
+                          to:SCNVector3(a/2,bottom+total,0),
+                          offset:SCNVector3(max(0,shiftX)+r+dimensionDistance,0,0),
+                          root:body,size:labelSize*0.85)
+             addDimension("COLLAR  "+dimension(fitting.takeoffCollarLength),
+                          from:SCNVector3(shoulderX,shoulder,0),
+                          to:SCNVector3(shoulderX+collar*sin(tilt),
+                                        shoulder+collar*cos(tilt),0),
+                          offset:SCNVector3(r*cos(tilt)+dimensionDistance/2,
+                                            -r*sin(tilt),0),
+                          root:body,size:labelSize*0.72)
+         case .roundReducer, .roundEccentric:
+             let inletCollar = max(Float(m(fitting.reducerInletCollarLength)), 0.001)
+             let bodyLength = max(Float(m(fitting.effectiveReducerBodyLength)), 0.001)
+             let outletCollar = max(Float(m(fitting.reducerOutletCollarLength)), 0.001)
+             let length = inletCollar + bodyLength + outletCollar
+             let outRadius = max(Float(m(fitting.outletWidth))/2, 0.0005)
+             // On flat-top reducers, align the uppermost Z edges at each end.
+             let shiftZ = (fitting.reducerMode == .flatTop || fitting.shape == .roundEccentric)
+                 ? radius-outRadius : 0
+             let start = -length/2
+             let bodyStart = start + inletCollar
+             let bodyEnd = bodyStart + bodyLength
+             let finish = bodyEnd + outletCollar
+             let inletMouth = circularRing(radius: radius, y: start)
+             let inletShoulder = circularRing(radius: radius, y: bodyStart)
+             let outletShoulder = circularRing(radius: outRadius, y: bodyEnd, shiftZ: shiftZ)
+             let outletMouth = circularRing(radius: outRadius, y: finish, shiftZ: shiftZ)
+             body.addChildNode(SCNNode(geometry: mesh(rings: [inletMouth, inletShoulder])))
+             body.addChildNode(SCNNode(geometry: mesh(rings: [inletShoulder, outletShoulder])))
+             body.addChildNode(SCNNode(geometry: mesh(rings: [outletShoulder, outletMouth])))
+             addCollarSeam(at: inletShoulder, to: body)
+             addCollarSeam(at: outletShoulder, to: body)
+             addLabel("A  " + dimension(fitting.inletWidth),
+                      at: SCNVector3(0, start, radius+labelOffset/2),
+                      to: body, scale: labelSize)
+             addLabel("B  " + dimension(fitting.outletWidth),
+                      at: SCNVector3(0, finish, outRadius+shiftZ+labelOffset/2),
+                      to: body, scale: labelSize)
+             let gap=max(Float(m(1)),radius*0.18)
+             addDimension("C  "+dimension(fitting.reducerOverallLength),
+                          from:SCNVector3(radius,start,0),
+                          to:SCNVector3(radius,finish,0),
+                          offset:SCNVector3(gap*2.1,0,0),
+                          root:body,size:labelSize*0.82)
+             addDimension("IN COLLAR  "+dimension(fitting.reducerInletCollarLength),
+                          from:SCNVector3(radius,start,0),
+                          to:SCNVector3(radius,bodyStart,0),
+                          offset:SCNVector3(gap*0.55,0,0),
+                          root:body,size:labelSize*0.72)
+             addDimension("OUT COLLAR  "+dimension(fitting.reducerOutletCollarLength),
+                          from:SCNVector3(outRadius,bodyEnd,shiftZ),
+                          to:SCNVector3(outRadius,finish,shiftZ),
+                          offset:SCNVector3(gap*0.8,0,0),
+                          root:body,size:labelSize*0.72)
+         case .rectEndCap:
+             // Closed front face, single open rectangular connection at the rear.
+             // The shallow illustrative rim is not a user-entered dimension.
+             let a = max(Float(m(fitting.inletWidth)), 0.001)
+             let b = max(Float(m(fitting.inletHeight)), 0.001)
+             let rim = max(Float(m(0.5)), min(a, b) * 0.05)
+             body.addChildNode(SCNNode(geometry: mesh(rings: [
+                 rectangularEnd(width: a, depth: b, y: -rim/2),
+                 rectangularEnd(width: a, depth: b, y: rim/2)
+             ], closeEnd: true)))
+             addLabel("A  " + dimension(fitting.inletWidth),
+                      at: SCNVector3(0, 0, b/2 + labelOffset/2),
+                      to: body, scale: labelSize)
+             addLabel("B  " + dimension(fitting.inletHeight),
+                      at: SCNVector3(a/2 + labelOffset/2, 0, 0),
+                      to: body, scale: labelSize)
+         case .rectElbow45, .rectElbow90, .rectRadiusElbow:
+             // Square elbows are sharp MITERED folds; only the separate
+             // radius elbow is bend-formed into multiple bump-brake facets.
+             let a=max(Float(m(fitting.inletWidth)),0.001)
+             let b=max(Float(m(fitting.inletHeight)),0.001)
+             let c=max(Float(m(fitting.outletWidth)),0.001)
+             let d=max(Float(m(fitting.outletHeight)),0.001)
+             let radiusType=fitting.shape == .rectRadiusElbow
+             let sweep=fitting.shape == .rectElbow45 ? Float.pi/4 : Float.pi/2
+             let inside=radiusType ? max(Float(m(fitting.radius)),0.001) : Float(0.001)
+             let bendRadius=inside+a/2
+             let straightIn=radiusType ? Float(0) : max(Float(m(fitting.straightIn)),0)
+             let straightOut=radiusType ? Float(0) : max(Float(m(fitting.straightOut)),0)
+             let topShift=radiusType ? Float(m(fitting.verticalValue)) : Float(0)
+             var rings: [[SCNVector3]]=[]
+             var endX: Float = 0
+             var endY: Float = 0
+             var finalX: Float = 0
+             var finalY: Float = 0
+             if radiusType {
+                 // Radius elbow: multiple physical bump-brake facets along
+                 // a curved inner radius. Keep the radius-based bend.
+                 if straightIn > 0.0001 {
+                     rings.append(bentRectangle(x:0,y:-straightIn,angle:0,
+                                                width:a,depth:b))
+                 }
+                 rings.append(bentRectangle(x:0,y:0,angle:0,width:a,depth:b))
+                 for index in 1...16 {
+                     let t=Float(index)/16
+                     let theta=sweep*t
+                     let centerX=bendRadius*(1-cos(theta))
+                     let centerY=bendRadius*sin(theta)
+                     rings.append(bentRectangle(x:centerX,y:centerY,angle:theta,
+                                                width:a+(c-a)*t,
+                                                depth:b+(d-b)*t,
+                                                zShift:topShift*t))
+                 }
+                 endX=bendRadius*(1-cos(sweep))
+                 endY=bendRadius*sin(sweep)
+                 finalX=endX+straightOut*sin(sweep)
+                 finalY=endY+straightOut*cos(sweep)
+                 if straightOut > 0.0001 {
+                     rings.append(bentRectangle(x:finalX,y:finalY,angle:sweep,
+                                                width:c,depth:d,zShift:topShift))
+                 }
+             } else {
+                 // TRUE MITERED square elbow. The inner-throat corner
+                 // (a/2,0) is sharp, and the outer-heel walls intersect at
+                 // a single hard corner, never an interpolated curved path.
+                 //
+                 // Inlet outside wall: x=-a/2. Outgoing outside wall:
+                 // innerCorner + (-c*cos(sweep), c*sin(sweep)) + t*outAxis.
+                 // Their intersection is the sharp heel below.
+                 let si=sin(sweep), co=cos(sweep)
+                 let heelY=(c-a*co)/max(si,Float(0.00001))
+                 let innerX=a/2
+                 let exitInnerX=innerX+straightOut*si
+                 let exitInnerY=straightOut*co
+                 let exitOuterX=exitInnerX-c*co
+                 let exitOuterY=exitInnerY+c*si
+                 endX=innerX
+                 endY=0
+                 finalX=(exitInnerX+exitOuterX)/2
+                 finalY=(exitInnerY+exitOuterY)/2
+                 rings.append(bentRectangle(x:0,y:-straightIn,angle:0,
+                                            width:a,depth:b))
+                 rings.append([
+                     SCNVector3(innerX,0,b/2),
+                     SCNVector3(-a/2,heelY,b/2),
+                     SCNVector3(-a/2,heelY,-b/2),
+                     SCNVector3(innerX,0,-b/2)
+                 ])
+                 rings.append([
+                     SCNVector3(exitInnerX,exitInnerY,d/2),
+                     SCNVector3(exitOuterX,exitOuterY,d/2),
+                     SCNVector3(exitOuterX,exitOuterY,-d/2),
+                     SCNVector3(exitInnerX,exitInnerY,-d/2)
+                 ])
+             }
+             body.addChildNode(SCNNode(geometry:panelMesh(rings:rings)))
+             // Internal turning vanes are separate thin curved sheets
+             // (visually distinct from square-body folds).
+             if fitting.hasTurningVanes {
+                 var vanePanels: [[SCNVector3]]=[]
+                 let halfWidth=min(a,c)/2
+                 let bladeDepth=min(b,d)*0.8
+                 for vane in 1...4 {
+                     let across=Float(vane)/5
+                     let radiusOffset=(across-0.5)*2*halfWidth
+                     for piece in 0..<18 {
+                         let t0=Float(piece)/18
+                         let t1=Float(piece+1)/18
+                         func point(_ t:Float,_ z:Float)->SCNVector3 {
+                             let th=sweep*t
+                             return SCNVector3(
+                                 bendRadius * (1 - cos(th)) + radiusOffset * cos(th),
+                                 bendRadius * sin(th) - radiusOffset * sin(th),
+                                 z + topShift * t
+                             )
+                         }
+                         vanePanels.append([point(t0,-bladeDepth/2),
+                                            point(t1,-bladeDepth/2),
+                                            point(t0,bladeDepth/2),
+                                            point(t1,bladeDepth/2)])
+                     }
+                 }
+                 let vaneNode=SCNNode(geometry:quadsMesh(vanePanels))
+                 vaneNode.name="turningVanes"
+                 body.addChildNode(vaneNode)
+             }
+             let gap=max(Float(m(1)),min(a,b)*0.13)
+             addDimension("A  "+dimension(fitting.inletWidth),
+                          from:SCNVector3(-a/2,-straightIn,b/2),
+                          to:SCNVector3(a/2,-straightIn,b/2),
+                          offset:SCNVector3(0,0,gap),root:body,size:labelSize*0.72)
+             addDimension("B  "+dimension(fitting.inletHeight),
+                          from:SCNVector3(a/2,-straightIn,-b/2),
+                          to:SCNVector3(a/2,-straightIn,b/2),
+                          offset:SCNVector3(gap,0,0),root:body,size:labelSize*0.72)
+             let outerX=cos(sweep)*c/2
+             let outerY = -sin(sweep) * c / 2
+             addDimension("C  "+dimension(fitting.outletWidth),
+                          from:SCNVector3(finalX-outerX,finalY-outerY,topShift+d/2),
+                          to:SCNVector3(finalX+outerX,finalY+outerY,topShift+d/2),
+                          offset:SCNVector3(0,0,gap),root:body,size:labelSize*0.72)
+             addDimension("D  "+dimension(fitting.outletHeight),
+                          from:SCNVector3(finalX+outerX,finalY+outerY,topShift-d/2),
+                          to:SCNVector3(finalX+outerX,finalY+outerY,topShift+d/2),
+                          offset:SCNVector3(gap,0,0),root:body,size:labelSize*0.72)
+             if radiusType {
+                 addDimension("E  Radius "+dimension(fitting.radius),
+                              from:SCNVector3(0,0,-b/2),
+                              to:SCNVector3(inside,0,-b/2),
+                              offset:SCNVector3(0,-gap,0),root:body,
+                              size:labelSize*0.65)
+                 addDimension("F  Shift "+dimension(fitting.verticalValue),
+                              from:SCNVector3(endX,endY,0),
+                              to:SCNVector3(endX,endY,topShift),
+                              offset:SCNVector3(gap,0,-gap),root:body,
+                              size:labelSize*0.65)
+             } else {
+                 // E/F reference the two actual *inside throat* straight
+                 // edges. Editing E moves the inlet mouth; editing F
+                 // extends the exit mouth without altering the heel.
+                 addDimension("E  "+dimension(fitting.straightIn),
+                              from:SCNVector3(a/2,0,b/2),
+                              to:SCNVector3(a/2,-straightIn,b/2),
+                              offset:SCNVector3(gap*0.5,0,gap*0.3),root:body,
+                              size:labelSize*0.65)
+                 addDimension("F  "+dimension(fitting.straightOut),
+                              from:SCNVector3(endX,endY,d/2),
+                              to:SCNVector3(endX+straightOut*sin(sweep),
+                                            endY+straightOut*cos(sweep),d/2),
+                              offset:SCNVector3(gap*cos(sweep)*0.5,
+                                                -gap*sin(sweep)*0.5,gap*0.3),
+                              root:body,size:labelSize*0.65)
+             }
+         case .rectTee:
+             addTee(to: body, labelOffset: labelOffset, labelSize: labelSize)
+         case .roundEndCap:
+             // A closed disk, one open end. Display a shallow rim for clarity.
+             let depth = max(diameter*0.05, 0.006)
+             body.addChildNode(SCNNode(geometry: mesh(rings: [
+                 circularRing(radius: radius, y: -depth/2),
+                 circularRing(radius: radius, y: depth/2)
+             ], closeEnd: true)))
+             addLabel("A  " + dimension(fitting.inletWidth), at: SCNVector3(0, 0, radius+labelOffset/2), to: body, scale: labelSize)
+         case .roundElbow45, .roundElbow90:
+             let angle = Float(fitting.angle * .pi / 180)
+             let bendRadius = radius * Float(fitting.radiusFactor == .one ? 2.0 : 3.0)
+             let sections = max(16, Int(ceil(fitting.angle/4)))
+             let rings = (0...sections).map { step -> [SCNVector3] in
+                 let theta = angle * Float(step)/Float(sections)
+                 let cx = bendRadius*(1-cos(theta))
+                 let cy = bendRadius*sin(theta)
+                 return (0..<64).map { index in
+                     let phi = Float(index)*2*Float.pi/64
+                     let radial = radius*cos(phi)
+                     return SCNVector3(cx + radial*cos(theta),
+                                       cy - radial*sin(theta),
+                                       radius*sin(phi))
+                 }
+             }
+             body.addChildNode(SCNNode(geometry: mesh(rings: rings)))
+             addLabel("A  " + dimension(fitting.inletWidth), at: SCNVector3(0, 0, radius+labelOffset/2), to: body, scale: labelSize)
+             addLabel("B  " + String(format: "%g", fitting.angle) + "°", at: SCNVector3(bendRadius*0.65, bendRadius*0.5, radius+labelOffset), to: body, scale: labelSize)
+         default: break
+         }
+         return scene
+     }
+
+ }
 
 // Shared image source for both the iPhone editor and exported PDF.
 struct FabDiagramView: View {
@@ -731,11 +2125,40 @@ struct FabDiagramView: View {
     }
 }
 
+// Compact, recognizable thumbnail for each saved fitting in an area list.
+// The same CAD artwork used in the fitting selector and fabrication PDF is reused here.
+// Use the actual fitting to respect reducer alignment and other image-specific options.
+struct FabFittingListIcon: View {
+    let fitting: FabFitting
+
+    private var drawing: UIImage? {
+        guard fitting.shape.isCatalogRect || fitting.shape.isCatalogRound else { return nil }
+        return FabDiagramArt.images(for: fitting).first
+    }
+
+    var body: some View {
+        Group {
+            if let drawing = drawing {
+                Image(uiImage: drawing)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(3)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
+            } else {
+                FabLegacyGlyph(shape: fitting.shape)
+                    .padding(3)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
 struct FabFittingGlyph: View {
     let shape: FabShape
     var body: some View {
         Group {
-            if shape.isCatalogRect {
+            if shape.isCatalogRect || shape.isCatalogRound {
                 FabDiagramView(fitting: .new(shape: shape, areaID: nil), compact: true)
             } else {
                 FabLegacyGlyph(shape: shape)
@@ -761,13 +2184,13 @@ struct FabLegacyGlyph: View {
                              at: point(x, y))
             }
             switch shape {
-            case .rectStraight, .roundStraight:
+            case .rectStraight, .roundStraight, .roundSpiral:
                 outline.addRect(CGRect(x: w*0.20, y: h*0.32, width: w*0.60, height: h*0.36))
                 if shape.isRound {
                     outline.addEllipse(in: CGRect(x: w*0.18, y: h*0.32, width: w*0.10, height: h*0.36))
                     outline.addEllipse(in: CGRect(x: w*0.74, y: h*0.32, width: w*0.10, height: h*0.36))
                 }
-            case .rectTransition, .squareRound, .roundReducer, .roundEccentric:
+            case .rectTransition, .squareRound, .roundReducer, .roundEccentric, .roundHeto90, .roundHeto45:
                 line((17,27),(32,27)); line((32,27),(67,37)); line((67,37),(82,37))
                 line((17,73),(32,73)); line((32,73),(67,63)); line((67,63),(82,63))
                 line((17,27),(17,73)); line((82,37),(82,63))
@@ -803,7 +2226,7 @@ struct FabLegacyGlyph: View {
                 line((12,40),(88,40)); line((12,64),(88,64))
                 line((12,40),(12,64)); line((88,40),(88,64))
                 line((43,40),(43,14)); line((63,40),(63,14)); line((43,14),(63,14))
-            case .rectRadiusElbow, .rectTee, .rectEndCap:
+            case .rectRadiusElbow, .rectTee, .rectEndCap, .roundEndCap:
                 outline.addRect(CGRect(x: w*0.20, y: h*0.20, width: w*0.60, height: h*0.60))
             case .custom:
                 outline.addRect(CGRect(x:w*0.20,y:h*0.20,width:w*0.60,height:h*0.60))
