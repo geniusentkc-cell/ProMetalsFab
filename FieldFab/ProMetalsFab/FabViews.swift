@@ -1914,31 +1914,69 @@ private struct FabReadOnly3DPreview: View {
              let straightOut=radiusType ? Float(0) : max(Float(m(fitting.straightOut)),0)
              let topShift=radiusType ? Float(m(fitting.verticalValue)) : Float(0)
              var rings: [[SCNVector3]]=[]
-             if straightIn>0.0001 {
+             var endX: Float = 0
+             var endY: Float = 0
+             var finalX: Float = 0
+             var finalY: Float = 0
+             if radiusType {
+                 // Radius elbow: multiple physical bump-brake facets along
+                 // a curved inner radius. Keep the radius-based bend.
+                 if straightIn > 0.0001 {
+                     rings.append(bentRectangle(x:0,y:-straightIn,angle:0,
+                                                width:a,depth:b))
+                 }
+                 rings.append(bentRectangle(x:0,y:0,angle:0,width:a,depth:b))
+                 for index in 1...16 {
+                     let t=Float(index)/16
+                     let theta=sweep*t
+                     let centerX=bendRadius*(1-cos(theta))
+                     let centerY=bendRadius*sin(theta)
+                     rings.append(bentRectangle(x:centerX,y:centerY,angle:theta,
+                                                width:a+(c-a)*t,
+                                                depth:b+(d-b)*t,
+                                                zShift:topShift*t))
+                 }
+                 endX=bendRadius*(1-cos(sweep))
+                 endY=bendRadius*sin(sweep)
+                 finalX=endX+straightOut*sin(sweep)
+                 finalY=endY+straightOut*cos(sweep)
+                 if straightOut > 0.0001 {
+                     rings.append(bentRectangle(x:finalX,y:finalY,angle:sweep,
+                                                width:c,depth:d,zShift:topShift))
+                 }
+             } else {
+                 // TRUE MITERED square elbow. The inner-throat corner
+                 // (a/2,0) is sharp, and the outer-heel walls intersect at
+                 // a single hard corner, never an interpolated curved path.
+                 //
+                 // Inlet outside wall: x=-a/2. Outgoing outside wall:
+                 // innerCorner + (-c*cos(sweep), c*sin(sweep)) + t*outAxis.
+                 // Their intersection is the sharp heel below.
+                 let si=sin(sweep), co=cos(sweep)
+                 let heelY=(c-a*co)/max(si,Float(0.00001))
+                 let innerX=a/2
+                 let exitInnerX=innerX+straightOut*si
+                 let exitInnerY=straightOut*co
+                 let exitOuterX=exitInnerX-c*co
+                 let exitOuterY=exitInnerY+c*si
+                 endX=innerX
+                 endY=0
+                 finalX=(exitInnerX+exitOuterX)/2
+                 finalY=(exitInnerY+exitOuterY)/2
                  rings.append(bentRectangle(x:0,y:-straightIn,angle:0,
                                             width:a,depth:b))
-             }
-             rings.append(bentRectangle(x:0,y:0,angle:0,width:a,depth:b))
-             // Two hard panels for square elbows, short series of real bent
-             // facets for the radius version. Neither is a smooth soft tube.
-             let sections=radiusType ? 16 : 2
-             for index in 1...sections {
-                 let t=Float(index)/Float(sections)
-                 let theta=sweep*t
-                 let centerX=bendRadius*(1-cos(theta))
-                 let centerY=bendRadius*sin(theta)
-                 rings.append(bentRectangle(x:centerX,y:centerY,angle:theta,
-                                            width:a+(c-a)*t,
-                                            depth:b+(d-b)*t,
-                                            zShift:topShift*t))
-             }
-             let endX=bendRadius*(1-cos(sweep))
-             let endY=bendRadius*sin(sweep)
-             let finalX=endX+straightOut*sin(sweep)
-             let finalY=endY+straightOut*cos(sweep)
-             if straightOut>0.0001 {
-                 rings.append(bentRectangle(x:finalX,y:finalY,angle:sweep,
-                                            width:c,depth:d,zShift:topShift))
+                 rings.append([
+                     SCNVector3(innerX,0,b/2),
+                     SCNVector3(-a/2,heelY,b/2),
+                     SCNVector3(-a/2,heelY,-b/2),
+                     SCNVector3(innerX,0,-b/2)
+                 ])
+                 rings.append([
+                     SCNVector3(exitInnerX,exitInnerY,d/2),
+                     SCNVector3(exitOuterX,exitOuterY,d/2),
+                     SCNVector3(exitOuterX,exitOuterY,-d/2),
+                     SCNVector3(exitInnerX,exitInnerY,-d/2)
+                 ])
              }
              body.addChildNode(SCNNode(geometry:panelMesh(rings:rings)))
              // Internal turning vanes are separate thin curved sheets
@@ -2002,16 +2040,21 @@ private struct FabReadOnly3DPreview: View {
                               offset:SCNVector3(gap,0,-gap),root:body,
                               size:labelSize*0.65)
              } else {
+                 // E/F reference the two actual *inside throat* straight
+                 // edges. Editing E moves the inlet mouth; editing F
+                 // extends the exit mouth without altering the heel.
                  addDimension("E  "+dimension(fitting.straightIn),
-                              from:SCNVector3(-a/2,0,-b/2),
-                              to:SCNVector3(-a/2,-straightIn,-b/2),
-                              offset:SCNVector3(-gap,0,0),root:body,
+                              from:SCNVector3(a/2,0,b/2),
+                              to:SCNVector3(a/2,-straightIn,b/2),
+                              offset:SCNVector3(gap*0.5,0,gap*0.3),root:body,
                               size:labelSize*0.65)
                  addDimension("F  "+dimension(fitting.straightOut),
-                              from:SCNVector3(endX,endY,-d/2),
-                              to:SCNVector3(finalX,finalY,-d/2),
-                              offset:SCNVector3(gap,0,0),root:body,
-                              size:labelSize*0.65)
+                              from:SCNVector3(endX,endY,d/2),
+                              to:SCNVector3(endX+straightOut*sin(sweep),
+                                            endY+straightOut*cos(sweep),d/2),
+                              offset:SCNVector3(gap*cos(sweep)*0.5,
+                                                -gap*sin(sweep)*0.5,gap*0.3),
+                              root:body,size:labelSize*0.65)
              }
          case .rectTee:
              addTee(to: body, labelOffset: labelOffset, labelSize: labelSize)
